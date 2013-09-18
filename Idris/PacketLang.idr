@@ -28,8 +28,7 @@ data Chunk : Type where
   -- Proposition about data
   Prop : (P : Proposition) -> Chunk
 
-
--- Proof search
+infixl 5 //
 {-
 isThatSo : List (TTName, Binder TT) -> TT -> Tactic
 isThatSo ctxt goal = (Refine "oh") `Seq` Solve
@@ -54,9 +53,37 @@ propTy (P_OR s t) = Either (propTy s) (propTy t)
 -- TODO <<
 partial
 chunkTy : Chunk -> Type
--- chunkTy (Bit w p) = Bounded 
+chunkTy (Bit w p) = Bounded w -- FIXME, take into account bit width
 chunkTy CString = String
 chunkTy (LString i) = String
 chunkTy (Prop p) = propTy p
 
+
+
+-- Packet Language
+mutual
+  data PacketLang : Type where
+    CHUNK : (c : Chunk) -> PacketLang
+    IF : (test : Bool) -> (yes : PacketLang) -> (no : PacketLang) -> PacketLang
+    -- // : or
+    (//) : PacketLang -> PacketLang -> PacketLang
+    LIST : PacketLang -> PacketLang
+    LISTN : (n : Nat) -> PacketLang -> PacketLang
+    (>>=) : (p : PacketLang) -> (mkTy p -> PacketLang) -> PacketLang
+
+  -- Packet language decoding
+  mkTy : PacketLang -> Type
+  mkTy (CHUNK c) = chunkTy c
+  mkTy (IF x t e) = if x then (mkTy t) else (mkTy e)
+  mkTy (l // r) = Either (mkTy l) (mkTy r)
+  mkTy (LIST x) = List (mkTy x)
+  mkTy (LISTN n a) = Vect n (mkTy a)
+  mkTy (c >>= k) = (x ** mkTy (k x))
+
+
+-- ICMP Stuff
+
+--ICMP : PacketLang
+--ICMP = ?mv
+  
 
