@@ -1,0 +1,9 @@
+CC = gcc
+CFLAGS = `idris --include`
+
+idris_net.o : idris_net.c idris_net.h
+
+clean: .PHONY
+	rm idris_net.o
+
+.PHONY : 

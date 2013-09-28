@@ -1,0 +1,8 @@
+package idrisnet
+
+sourcedir = src
+modules = Network.TCP
+opts = "-p effects"
+makefile = MakefileIdrisNetC
+
+objs = idris_net.o, idris_net.h

@@ -29,14 +29,14 @@ data Chunk : Type where
   Prop : (P : Proposition) -> Chunk
 
 infixl 5 //
-{-
+
 isThatSo : List (TTName, Binder TT) -> TT -> Tactic
-isThatSo ctxt goal = (Refine "oh") `Seq` Solve
+isThatSo ctxt goal = (Refine "oh")
 
 
 pines : so ((S Z) < (S (S Z)))
-pines = ?mv
--}
+pines = oh
+
 
 data Both : Proposition -> Proposition -> Type where
   MkBoth : (a : Proposition) -> (b : Proposition) -> (so (propTy a)) -> (so (propTy b)) -> Both a b
@@ -81,6 +81,45 @@ mutual
   mkTy (c >>= k) = (x ** mkTy (k x))
 
 
+-- Syntax rules, so it's nicer to write these things...
+-- Perhaps this would be better as an effectual EDSL? Well, can look into it anyway.
+--bit_ : (i : Int) -> (w : Int) -> (so (i < w)) -> Chunk
+--bit_ i w p = Bit i p
+
+bit : (w : Int) -> {default tactics { refine oh; solve;} 
+                     p : so (w > 0) } 
+                -> Chunk
+bit w {p} = Bit w p
+
+-- syntax bit [x] = Bit x oh
+syntax bits [n] = CHUNK (bit n)
+--syntax bounded [x] = BInt x oh
+syntax check [p] = CHUNK (Prop (P_BOOL p))
+syntax lstring [n] = CHUNK (LString n)
+syntax cstring = CHUNK (CString)
+
+
+--bit : {w : Int} -> (i : Int) -> (p : (so (i < w))) -> Chunk
+--bit i p = Bit i p
+
+
+
+--bits : Int -> PacketLang
+--bits n = CHUNK (bit n)
+
+myBounded : Bounded 5
+myBounded = BInt 0 oh
+
+value : Bounded i -> Int
+value (BInt i p) = i
+
+stringFormat : PacketLang
+--stringFormat i = (bits i) >>= 
+--                 (\len => (check (value len > 0)) >>= \_ => lstring (value len))
+stringFormat = do len <- bits 5
+                  check ((value len) > 0)
+                  --let len = myBounded
+                  lstring (value len)
 -- ICMP Stuff
 
 --ICMP : PacketLang
