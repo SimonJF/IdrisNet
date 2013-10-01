@@ -2,7 +2,7 @@
 // SJF, started on 28/09/13...
 #include "idris_net.h"
 
-void* idrnet_listen(VM* vm, const char* ip, const char* port) {
+void* idrnet_listen(const char* ip, const char* port) {
 }
 
 void* idrnet_allocate_conn_info() {
@@ -73,7 +73,7 @@ int idrnet_send(void* conn_info, const char* data) {
     len = strlen(data);
 
     // Ensure we send the whole string
-    while (bytes_sent != orig_len) {
+    while (bytes_sent != len) {
         int send_res = send(i_conn_info->sockfd, data + bytes_sent, len - bytes_sent, 0);
         if (send_res == -1) {
             i_conn_info->last_error = errno;
@@ -84,28 +84,31 @@ int idrnet_send(void* conn_info, const char* data) {
     return bytes_sent;
 }
 
-const char* idrnet_recv(void* conn_info) {
+int idrnet_recv(void* conn_info) {
     // BIG TODO: This doesn't receive more data than BUFFER_SIZE! This should be rectified.
     char* data = (char*) malloc(sizeof(char) * BUFFER_SIZE);
-    idr_conn_info i_conn_info = (idr_conn_info*) conn_info;
+    idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
     // We need to make sure we null terminate
     int num_bytes = recv(i_conn_info->sockfd, data, BUFFER_SIZE - 1, 0);
     if (num_bytes < 0) {
         // Error reading from socket
         i_conn_info->last_error = errno;
-        return NULL;
+        free(data);
+        return errno;
     } else if (num_bytes == 0) {
         // Connection closed
         i_conn_info->last_error = 0;
-        return NULL;
+        free(data);
+        return 0;
     }
     data[num_bytes] = '\0';
-    return data;
+    i_conn_info->fetched_data = data;
+    return num_bytes;
 }
 
 // Just to allay any potential concurrency issues.
 // We pass around the state for every connection -- so why not just store the last error in that?
 int idrnet_get_last_error(void* conn_info) {
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
-    return conn_info->last_error;
+    return i_conn_info->last_error;
 }

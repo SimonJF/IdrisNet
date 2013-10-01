@@ -19,6 +19,7 @@ typedef struct idr_conn_info {
     struct addrinfo* addr_info;
     int sockfd;
     int last_error;
+    const char* fetched_data;
 } idr_conn_info;
 
 // API:
@@ -26,11 +27,11 @@ typedef struct idr_conn_info {
 // Listens on a TCP socket with the given IP and port.
 // Idris will have checked IP and port at this point, and serialised to strings.
 // TODO: Perhaps add other params in
-void* idrnet_listen(VM* vm, const char* ip, const char* port); 
+void* idrnet_listen(const char* ip, const char* port); 
 
 // Attempts to connect to a TCP socket with the given IP and port.
 // Again, Idris will have checked IP and port by this point.
-void* idrnet_connect(void* conn_info, const char* ip, const char* port);
+int idrnet_connect(void* conn_info, const char* ip, const char* port);
 
 // Attempts to close the current connection
 int idrnet_close(void* conn_info);
@@ -43,15 +44,18 @@ int idrnet_send(void* conn_info, const char* data);
 
 // Receives data from the given connection.
 // Returns NULL if there's a 
-const char* idrnet_recv(VM* vm, void* conn_info);
+int idrnet_recv(void* conn_info);
 
 // Allocates an idr_conn_info struct, which is passed into subsequent calls
 void* idrnet_allocate_conn_info();
 
 // Frees the idr_conn_info struct
-void idrnet_deallocate_conn_info();
+void idrnet_deallocate_conn_info(void* conn_info);
 
-// Returns errno
+// Returns the last error stored in the connection state
 int idrnet_get_last_error();
+
+// Retrieve result of last fetch (as we can't do a null check on a string in idris...)
+const char* idrnet_get_fetched_data();
 
 #endif
