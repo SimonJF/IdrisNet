@@ -56,6 +56,6 @@ void idrnet_deallocate_conn_info(void* conn_info);
 int idrnet_get_last_error();
 
 // Retrieve result of last fetch (as we can't do a null check on a string in idris...)
-const char* idrnet_get_fetched_data();
+const char* idrnet_get_fetched_data(void* conn_info);
 
 #endif

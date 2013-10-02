@@ -7,6 +7,7 @@ void* idrnet_listen(const char* ip, const char* port) {
 
 void* idrnet_allocate_conn_info() {
     void* conn_info = malloc(sizeof(idr_conn_info));
+    // Nuke it
     memset(conn_info, 0, sizeof(idr_conn_info));
     return conn_info;
 }
@@ -88,6 +89,11 @@ int idrnet_recv(void* conn_info) {
     // BIG TODO: This doesn't receive more data than BUFFER_SIZE! This should be rectified.
     char* data = (char*) malloc(sizeof(char) * BUFFER_SIZE);
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
+    // Firstly, nuke any of the data that might still be in there...
+    if (i_conn_info->fetched_data != NULL) {
+        free((void*)(i_conn_info->fetched_data));
+    }
+
     // We need to make sure we null terminate
     int num_bytes = recv(i_conn_info->sockfd, data, BUFFER_SIZE - 1, 0);
     if (num_bytes < 0) {
@@ -112,3 +118,11 @@ int idrnet_get_last_error(void* conn_info) {
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
     return i_conn_info->last_error;
 }
+
+const char* idrnet_get_fetched_data(void* conn_info) {
+    idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
+    printf("C: Fetched data %s\n", i_conn_info->fetched_data);
+    return i_conn_info->fetched_data;
+
+}
+

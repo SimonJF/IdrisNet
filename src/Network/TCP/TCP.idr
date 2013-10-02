@@ -1,6 +1,8 @@
 module Network.TCP.TCP
 import Effects
 
+-- D'OH
+%access public
 %link C "idris_net.o"
 %include C "idris_net.h"
 

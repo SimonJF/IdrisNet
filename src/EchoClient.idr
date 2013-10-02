@@ -1,16 +1,26 @@
 module Main 
 import Effects
 import Effect.StdIO
-import Network.TCP
+import Network.TCP.TCP
+
+echoClientLoop' : Eff IO [STDIO, TCP (TCPRes ConnectAttempted)] Bool
+echoClientLoop' = do line <- (lift' getStr)
+                     lift' (sendData line)
+                     recv <- (lift' recvData)
+                     case recv of
+                       Left (Just err) => do lift' (putStr $ "Error: " ++ (show err))
+                                             return False
+                       Left Nothing => do lift' (putStr $ "Internal error")
+                                          return False
+                       Right str => do lift' (putStr $ "Server sent: " ++ str)
+                                       return True
 
 echoClientLoop : Nat -> Eff IO [TCP (TCPRes ConnectAttempted)] ()
 echoClientLoop Z = return ()
 echoClientLoop (S k) = do
-  new () (do line <- getStr
-             sendData line
-             recv <- recvData
-             putStr $ "Server sent: " ++ recv)
-  echoClientLoop k
+  res <- new () echoClientLoop'
+  if res then echoClientLoop k
+         else return ()
 
 runEchoClient : IPAddr -> Port -> Eff IO [TCP ()] ()
 runEchoClient ip port = do
