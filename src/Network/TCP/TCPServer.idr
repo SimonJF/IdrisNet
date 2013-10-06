@@ -57,6 +57,7 @@ private
 allocateState : EffM IO [TCPSERVER ()] [TCPSERVER (TCPServerRes StateAllocated)] Bool
 allocateState = AllocateState
 
+private
 freeState : EffM IO [TCPSERVER (TCPServerRes StateAllocated)] [TCPSERVER ()] ()
 freeState = FreeState
 
@@ -66,8 +67,25 @@ sendData c dat = (SendData c dat)
 recvData : Client -> Eff IO [TCPSERVER (TCPServerRes Listening)] (SocketOperationRes String)
 recvData c = (RecvData c)
 
-stopListening : EffM IO [TCPSERVER (TCPServerRes Listening)] [TCPSERVER (TCPServerRes StateAllocated)] ()
-stopListening = StopListening
+private
+stopListening' : EffM IO [TCPSERVER (TCPServerRes Listening)] [TCPSERVER (TCPServerRes StateAllocated)] ()
+stopListening' = StopListening
+
+listen' : Maybe IPAddr -> Port -> EffM IO [TCPSERVER (TCPServerRes StateAllocated)] [TCPSERVER (TCPServerRes Listening)] (SocketOperationRes ())
+listen' m_ip p = (Listen m_ip p)
+
+listen : Maybe IPAddr -> Port -> EffM IO [TCPSERVER ()] [TCPSERVER (TCPServerRes Listening)] (SocketOperationRes ())
+listen m_ip p = do
+  alloc_res <- allocateState
+  listen' m_ip p
+
+stopListening : EffM IO [TCPSERVER (TCPServerRes Listening)] [TCPSERVER ()] ()
+stopListening = do
+  stopListening'
+  freeState
+
+accept : Eff IO [TCPSERVER (TCPServerRes Listening)] (SocketOperationRes Client)
+accept = Accept
 
 instance Handler TcpServer IO where
   -- Allocation
@@ -86,8 +104,9 @@ instance Handler TcpServer IO where
     k () ()
 
   -- Listening
-  handle (TCPServerStateAllocated ptr) (Listen (Just ip) port) k = do
-    res <- mkForeign (FFun "idrnet_listen" [FPtr, FString, FString] FInt) ptr (show ip) (show port)
+  handle (TCPServerStateAllocated ptr) (Listen m_ip port) k = do
+    let ip = maybe "" show m_ip 
+    res <- mkForeign (FFun "idrnet_listen" [FPtr, FString, FString] FInt) ptr ip (show port)
     if (res /= 0) then do -- Error occurred
       err <- foreignGetLastError ptr
       k (TCPServerError (Just ptr)) (SocketFailure (Just err))
@@ -107,6 +126,18 @@ instance Handler TcpServer IO where
     else k (TCPServerStateAllocated ptr) (SocketSuccess ())
 
   handle (TCPServerError a) (SendData _ _) k = k (TCPServerError a) (SocketFailure Nothing)
+
+  -- Receiving Data
+  handle (TCPServerStateAllocated ptr) (RecvData c) k = do
+    res <- mkForeign (FFun "idrnet_recv" [FPtr] FInt) c
+    if (res <= 0) then do
+      err <- foreignGetLastError c
+      k (TCPServerStateAllocated ptr) (SocketFailure (Just err))
+    else do
+      recv_dat <- mkForeign (FFun "idrnet_get_fetched_data" [FPtr] FString) c
+      k (TCPServerStateAllocated ptr) (SocketSuccess recv_dat)
+
+  handle (TCPServerError a) (RecvData _) k = k (TCPServerError a) (SocketFailure Nothing)
 
   -- Accepting... Here goes...
   handle (TCPServerStateAllocated ptr) Accept k = do

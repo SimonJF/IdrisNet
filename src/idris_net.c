@@ -1,8 +1,10 @@
 // C Library for Idris Network Bindings
 // SJF, started on 28/09/13...
 #include "idris_net.h"
+#define BACKLOG 20
 
 int idrnet_listen(void* conn_info, const char* ip, const char* port) {
+    //printf("Listen called\n");
     struct addrinfo* addr_inf;
     struct addrinfo hints;
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
@@ -44,6 +46,12 @@ int idrnet_listen(void* conn_info, const char* ip, const char* port) {
     // getaddrinfo does so much awesome stuff for us <3
     int bind_res = bind(sockfd, addr_inf->ai_addr, addr_inf->ai_addrlen);
     if (bind_res == -1) {
+        i_conn_info->last_error = errno;
+        return i_conn_info->last_error;
+    }
+
+    int listen_res = listen(sockfd, BACKLOG); 
+    if (listen_res == -1) {
         i_conn_info->last_error = errno;
         return i_conn_info->last_error;
     }
@@ -190,13 +198,15 @@ int idrnet_recv(void* conn_info) {
     char* data = (char*) malloc(sizeof(char) * BUFFER_SIZE);
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
     // Firstly, nuke any of the data that might still be in there...
+//    printf("Recv called, conn_info: %p\n", conn_info);
+
     if (i_conn_info->fetched_data != NULL) {
         free((void*)(i_conn_info->fetched_data));
     }
 
     // We need to make sure we null terminate
     int num_bytes = recv(i_conn_info->sockfd, data, BUFFER_SIZE - 1, 0);
-    printf("C: num_bytes: %i\n", num_bytes);
+    //printf("C: num_bytes: %i\n", num_bytes);
     if (num_bytes < 0) {
         // Error reading from socket
         i_conn_info->last_error = errno;

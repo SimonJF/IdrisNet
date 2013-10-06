@@ -1,0 +1,7 @@
+all : EchoClient.idr EchoServer.idr
+	idris -p effects -p idrisnet -o EchoServer EchoServer.idr
+	idris -p effects -p idrisnet -o EchoClient EchoClient.idr
+	
+clean : 
+	rm EchoClient
+	rm EchoServer
