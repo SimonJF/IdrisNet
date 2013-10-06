@@ -1,79 +1,57 @@
-module Network.TCP.TCP
+module Network.TCP.TCPClient
 import Effects
+import Network.TCP.TCPCommon
 
 -- D'OH
 %access public
 %link C "idris_net.o"
 %include C "idris_net.h"
 
--- Raw connection info pointer within the C library. We don't use this directly
--- in the Idris code, but it is a parameter in all stateful operations.
-RawConnInfo : Type
-RawConnInfo = Ptr
-
--- C Error Code
-ErrorCode : Type
-ErrorCode = Int
-
-Port : Type
-Port = Int
-
-BytesSent : Type
-BytesSent = Int
-
--- TODO: Validation
--- Also, no IPv6 support yet...
-data IPAddr = IPv4Addr Int Int Int Int
-            | IPv6Addr 
-
-instance Show IPAddr where
-  show (IPv4Addr i1 i2 i3 i4) = concat $ intersperse "." $ map show [i1, i2, i3, i4]
-
-data TCPStep = StateAllocated
+data TCPClientStep = StateAllocated
              | ConnectAttempted
              | NotConnected
 
-data TCPRes : TCPStep -> Type where
-  TCPConnected : RawConnInfo -> TCPRes a
-  TCPStateAllocated : RawConnInfo -> TCPRes a
-  TCPError : Maybe ErrorCode -> Maybe RawConnInfo -> TCPRes a
+data TCPClientRes : TCPClientStep -> Type where
+  TCPConnected : RawConnInfo -> TCPClientRes a
+  TCPStateAllocated : RawConnInfo -> TCPClientRes a
+  TCPError : Maybe ErrorCode -> Maybe RawConnInfo -> TCPClientRes a
 
 -- BIG TODO: Verification on things like packet structures, IP addresses and such.
 -- Hacky for now!
 -- Bools are there because we can do if..then's over them, but more detailed info can be retrieved from the resource.
 --  ...though I might change this...
-data Tcp : Effect where
+data TcpClient : Effect where
   -- Attempts to connect to a given server
-  Connect : IPAddr -> Port -> Tcp (TCPRes StateAllocated) (TCPRes ConnectAttempted) (Maybe ErrorCode)
+  Connect : IPAddr -> Port -> TcpClient (TCPClientRes StateAllocated) (TCPClientRes ConnectAttempted) (Maybe ErrorCode)
   -- Disconnects from the current server
-  Disconnect : Tcp (TCPRes ConnectAttempted) (TCPRes NotConnected) ()
+  Disconnect : TcpClient (TCPClientRes ConnectAttempted) (TCPClientRes NotConnected) ()
   -- Attempts to send data to the current server
-  SendData : String -> Tcp (TCPRes ConnectAttempted) (TCPRes ConnectAttempted) (Either (Maybe ErrorCode) BytesSent)
+  SendData : String -> TcpClient (TCPClientRes ConnectAttempted) (TCPClientRes ConnectAttempted) (Either (Maybe ErrorCode) BytesSent)
   -- Receives data from the server
-  RecvData : Tcp (TCPRes ConnectAttempted) (TCPRes ConnectAttempted) (Either (Maybe ErrorCode) String)
+  RecvData : TcpClient (TCPClientRes ConnectAttempted) (TCPClientRes ConnectAttempted) (Either (Maybe ErrorCode) String)
   -- Gets the last error thrown by the server, should one exist
-  GetLastError : Tcp (TCPRes ConnectAttempted) (TCPRes ConnectAttempted) (Maybe ErrorCode)
+  GetLastError : TcpClient (TCPClientRes ConnectAttempted) (TCPClientRes ConnectAttempted) (Maybe ErrorCode)
   -- Allocates the C-side connection state. Called internally as part of the Connect call.
-  AllocateState : Tcp () (TCPRes StateAllocated) Bool
+  AllocateState : TcpClient () (TCPClientRes StateAllocated) Bool
   -- Frees the state. Must be called at the end, in order to prevent memory leaks.
-  FreeState : Tcp (TCPRes NotConnected) () ()
+  FreeState : TcpClient (TCPClientRes NotConnected) () ()
 
-TCP : Type -> EFFECT
-TCP t = MkEff t Tcp
+TCPCLIENT: Type -> EFFECT
+TCPCLIENT t = MkEff t TcpClient
 
 private
-connect' : IPAddr -> Port -> EffM IO [TCP (TCPRes StateAllocated)] [TCP (TCPRes ConnectAttempted)] (Maybe ErrorCode)
+connect' : IPAddr -> Port -> EffM IO [TCPCLIENT (TCPClientRes StateAllocated)] [TCPCLIENT (TCPClientRes ConnectAttempted)] (Maybe ErrorCode)
 connect' ip port = (Connect ip port)
 
 private
-disconnect' : EffM IO [TCP (TCPRes ConnectAttempted)] [TCP (TCPRes NotConnected)] ()
+disconnect' : EffM IO [TCPCLIENT (TCPClientRes ConnectAttempted)] [TCPCLIENT (TCPClientRes NotConnected)] ()
 disconnect' = Disconnect
 
 private 
-allocateState : EffM IO [TCP ()] [TCP (TCPRes StateAllocated)] Bool
+allocateState : EffM IO [TCPCLIENT ()] [TCPCLIENT (TCPClientRes StateAllocated)] Bool
 allocateState = AllocateState
 
-freeState : EffM IO [TCP (TCPRes NotConnected)] [TCP ()] ()
+freeState : EffM IO [TCPCLIENT (TCPClientRes NotConnected)] [TCPCLIENT ()] ()
 freeState = FreeState
 
 eitherSuccess : Either a b -> Bool
@@ -84,7 +62,7 @@ maybeSuccess : Maybe a -> Bool
 maybeSuccess (Just _) = True
 maybeSuccess _ = False
 
-connect : IPAddr -> Port -> EffM IO [TCP ()] [TCP (TCPRes ConnectAttempted)] (Maybe ErrorCode)
+connect : IPAddr -> Port -> EffM IO [TCPCLIENT ()] [TCPCLIENT (TCPClientRes ConnectAttempted)] (Maybe ErrorCode)
 connect ip port = do alloc_res <- allocateState
                      if alloc_res then do
                        connect_res <- connect' ip port
@@ -93,28 +71,26 @@ connect ip port = do alloc_res <- allocateState
                        connect' ip port
                        return Nothing
 
-disconnect : EffM IO [TCP (TCPRes ConnectAttempted)] [TCP ()] ()
+disconnect : EffM IO [TCPCLIENT (TCPClientRes ConnectAttempted)] [TCPCLIENT ()] ()
 disconnect = do disconnect'
                 freeState
 
-sendData : String -> Eff IO [TCP (TCPRes ConnectAttempted)] (Either (Maybe ErrorCode) BytesSent)
+sendData : String -> Eff IO [TCPCLIENT (TCPClientRes ConnectAttempted)] (Either (Maybe ErrorCode) BytesSent)
 sendData dat = (SendData dat)
 
-recvData : Eff IO [TCP (TCPRes ConnectAttempted)] (Either (Maybe ErrorCode) String)
+recvData : Eff IO [TCPCLIENT (TCPClientRes ConnectAttempted)] (Either (Maybe ErrorCode) String)
 recvData = RecvData
 
-getLastError : Eff IO [TCP (TCPRes ConnectAttempted)] (Maybe ErrorCode)
+getLastError : Eff IO [TCPCLIENT (TCPClientRes ConnectAttempted)] (Maybe ErrorCode)
 getLastError = GetLastError
 
-foreignGetLastError : RawConnInfo -> IO Int
-foreignGetLastError ptr = mkForeign (FFun "idrnet_get_last_error" [FPtr] FInt) ptr
 
 foreignFreeState : RawConnInfo -> IO ()
 foreignFreeState ptr = mkForeign (FFun "idrnet_deallocate_conn_info" [FPtr] FUnit) ptr
 
   -- Connection handlers
 
-instance Handler Tcp IO where
+instance Handler TcpClient IO where
   handle (TCPStateAllocated ptr) (Connect ip port) k = do
     conn_res <- mkForeign (FFun "idrnet_connect" [FPtr, FString, FString] FInt) ptr (show ip) (show port)
     if (conn_res /= 0) then -- Error occurred C-side
@@ -122,7 +98,7 @@ instance Handler Tcp IO where
     else 
       k (TCPConnected ptr) Nothing
   -- If Connect is called with any other resource, it's a failure case.
-  -- TODO: Increase granularity so the case Connect (TCPRes Connected) doesn't happen, by separating into a different resource
+  -- TODO: Increase granularity so the case Connect (TCPClientRes Connected) doesn't happen, by separating into a different resource
  -- handle (Connect _ _) (TCPError maybe_err maybe_ptr) k = k (TCPError maybe_err maybe_ptr) False
   --handle (Connect _ _) a k = k a False
 
@@ -150,7 +126,7 @@ instance Handler Tcp IO where
       -- Get last error
       err <- foreignGetLastError ptr
       -- *very* unsure about this. It'd be nicer, if a write fails, to have an exception function trigger...
-      -- TCP seems to be lending itself more to IOExcept than SQLite...
+      -- TCPCLIENTseems to be lending itself more to IOExcept than SQLite...
       k (TCPError (Just err) (Just ptr)) (Left (Just err))
     else k (TCPConnected ptr) (Right send_res)
 

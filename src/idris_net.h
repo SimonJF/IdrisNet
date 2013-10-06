@@ -15,6 +15,7 @@
 
 // Raw structure, passed to Idris as a void* pointer.
 // Contains connection-specific state, used in operations such as send and receive.
+// TODO: Error location: so, we'll need some enum specifying which call caused the failure
 typedef struct idr_conn_info {
     struct addrinfo* addr_info;
     int sockfd;
@@ -22,12 +23,29 @@ typedef struct idr_conn_info {
     const char* fetched_data;
 } idr_conn_info;
 
+// Structure returned by accept(): will require 2 FFI calls to access, 
+// but will support concurrency (when we get there)
+typedef struct idr_accept_res {
+    int result;
+    int err;
+    idr_conn_info* new_client;
+} idr_accept_res;
+
 // API:
 
 // Listens on a TCP socket with the given IP and port.
 // Idris will have checked IP and port at this point, and serialised to strings.
 // TODO: Perhaps add other params in
-void* idrnet_listen(const char* ip, const char* port); 
+int idrnet_listen(void* conn_info, const char* ip, const char* port); 
+
+// Accept a new client on a bound socket
+void* idrnet_accept(void* acceptor_info);
+// Accessor functions for members of accept result structure
+int idrnet_get_accept_res(void* accept_res_struct);
+int idrnet_get_accept_err(void* accept_res_struct);
+void* idrnet_get_accept_client(void* accept_res_struct);
+void idrnet_free_accept_struct(void* accept_res_struct);
+
 
 // Attempts to connect to a TCP socket with the given IP and port.
 // Again, Idris will have checked IP and port by this point.
@@ -53,7 +71,7 @@ void* idrnet_allocate_conn_info();
 void idrnet_deallocate_conn_info(void* conn_info);
 
 // Returns the last error stored in the connection state
-int idrnet_get_last_error();
+int idrnet_get_last_error(void* conn_info);
 
 // Retrieve result of last fetch (as we can't do a null check on a string in idris...)
 const char* idrnet_get_fetched_data(void* conn_info);
