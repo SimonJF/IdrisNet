@@ -23,8 +23,10 @@ data Chunk : Type where
   Bit : (width : Int) -> so (width > 0) -> Chunk
   -- Native C String, null terminated
   CString : Chunk
-  -- String with bounded length
+  -- String with fixed bounded length
   LString : Int -> Chunk
+  -- String with dynamic bounded length
+  --LString : ((length s) ** (s : String)) -> Chunk
   -- Proposition about data
   Prop : (P : Proposition) -> Chunk
 
@@ -93,16 +95,31 @@ bit w {p} = Bit w p
 
 -- syntax bit [x] = Bit x oh
 syntax bits [n] = CHUNK (bit n)
+--syntax bytes [n] = CHUNK (bit (n * 8))
 --syntax bounded [x] = BInt x oh
 syntax check [p] = CHUNK (Prop (P_BOOL p))
 syntax lstring [n] = CHUNK (LString n)
 syntax cstring = CHUNK (CString)
 
+value : Bounded i -> Int
+value (BInt i p) = i
+
+-- grrrrr, hackity hack
+natToInt : Nat -> Int
+natToInt Z = 0
+natToInt (S k) = 1 + (natToInt k)
+
+intToNat : Int -> Nat
+intToNat 0 = Z
+intToNat i = S (intToNat (i - 1))
+
+dlString : PacketLang
+dlString = do len <- bits 8
+              str <- lstring (value len)
+              check ((natToInt . Prelude.Strings.length $ str) == (value len))
 
 --bit : {w : Int} -> (i : Int) -> (p : (so (i < w))) -> Chunk
 --bit i p = Bit i p
-
-
 
 --bits : Int -> PacketLang
 --bits n = CHUNK (bit n)
@@ -110,8 +127,6 @@ syntax cstring = CHUNK (CString)
 myBounded : Bounded 5
 myBounded = BInt 0 oh
 
-value : Bounded i -> Int
-value (BInt i p) = i
 
 stringFormat : PacketLang
 --stringFormat i = (bits i) >>= 
@@ -121,8 +136,61 @@ stringFormat = do len <- bits 5
                   --let len = myBounded
                   lstring (value len)
 -- ICMP Stuff
+-- (Bit of a failed experiment, as we'll also need to implement all of IP...)
+ICMPType : Type
+ICMPType = Int
 
---ICMP : PacketLang
---ICMP = ?mv
-  
+ICMPCode : Type
+ICMPCode = Int
+
+validCode : ICMPType -> ICMPCode -> Bool
+-- Echo Reply
+validCode 0 x = x == 0
+-- 1 and 2 are reserved
+-- 3: Destination Unreachable
+validCode 3 x = x >=0 && x <= 15
+-- 4: Source Quench: Congestion Control
+validCode 4 x = x == 0
+-- 5: Redirect Message
+validCode 5 x = x >= 0 && x <= 3
+-- 6 and 7 unused
+-- 8: Echo Request
+validCode 8 x = x == 0
+-- 9: Router Advertisement
+validCode 9 x = x == 0
+-- Router Solicitation
+validCode 10 x = x == 0
+-- Time Exceeded
+validCode 11 x = x == 1 || x == 2
+-- Incorrect parameter
+validCode 12 x = x >= 0 && x <= 2
+-- Timestamp Request
+validCode 13 x = x == 0
+-- Timestamp Response
+validCode 14 x = x == 0
+-- Information Request
+validCode 15 x = x == 0
+-- Information Response
+validCode 16 x = x == 0
+-- Address Mask Request
+validCode 17 x = x == 0
+-- Address Mask Response
+validCode 18 x = x == 0
+-- 19 -> 29 reserved
+-- 30: Traceroute information reques
+validCode 30 x = x == 0
+-- Lots of deprecated TP/IX fields, not really necessary
+-- to implement right now, might do later for completeness
+validCode _ _ = False
+
+--icmpFormat : ICMPType -> ICMPCode -> PacketLang
+--  icmpFormat t c = 
+{-
+ICMP : PacketLang
+ICMP = do type <- bits 8
+          code <- bits 8
+          check (validCode (value type) (value code))
+          checksum <- bits 16
+-}
+
 
