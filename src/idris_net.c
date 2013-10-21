@@ -3,7 +3,167 @@
 #include "idris_net.h"
 #define BACKLOG 20
 
-int idrnet_listen(void* conn_info, const char* ip, const char* port) {
+int idrnet_udp_listen(void* conn_info, char* ip, char* port) {
+    struct addrinfo hints;
+    struct addrinfo* addr_info;
+    idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
+    memset(&hints, 0, sizeof(hints));
+    // Set up hints to use a datagram socket
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+    int res;
+
+    // Treat empty IP string as NULL, so IP inferred
+    // Will be a Maybe in the Idris code
+    if (strlen(ip) == 0) {
+        ip = NULL;
+        hints.ai_flags = AI_PASSIVE;
+    }
+
+
+    res = getaddrinfo(ip, port, &hints, &addr_info);
+    if (res != 0) {
+        i_conn_info->last_error = res;
+        return res;
+    }
+
+    i_conn_info->addr_info = addr_info;
+
+    int sockfd = socket(addr_info->ai_family, addr_info->ai_socktype, addr_info->ai_protocol);
+    if (sockfd == -1) {
+        i_conn_info->last_error = errno;
+        return i_conn_info->last_error;
+    }
+
+    res = bind(sockfd, addr_info->ai_addr, addr_info->ai_addrlen);
+    if (res == -1) {
+        i_conn_info->last_error = errno;
+        return i_conn_info->last_error;
+    }
+
+    return 0; // Success!
+}
+
+
+void* idrnet_udp_recv(void* conn_info) {
+    idr_conn_info* udp_server = (idr_conn_info*) conn_info;
+    idr_udp_res* udp_res = (idr_udp_res*) malloc(sizeof(idr_udp_res));
+    memset(udp_res, 0, sizeof(idr_udp_res));
+    struct sockaddr_storage* remote_host = malloc(sizeof(struct sockaddr_storage));
+    int addr_len;
+
+    // TODO: Receive all data available 
+    char* data = (char*) malloc(sizeof(char) * BUFFER_SIZE);
+    int recv_res = recvfrom(udp_server->sockfd, data, BUFFER_SIZE - 1, 0,
+         (struct sockaddr*) remote_host, &addr_len); 
+
+    if (recv_res == -1) {
+        udp_res->result = -1;
+        udp_res->err = errno;
+        return udp_res;
+    }
+
+    data[BUFFER_SIZE] = 0x00; // Null-term
+    udp_res->result = 0;
+    udp_res->err = 0;
+    udp_res->fetched_data = data;
+    udp_res->remote_host = remote_host;
+    udp_res->data_len = recv_res;
+    return udp_res;
+    
+}
+
+void* idrnet_udp_send(char* ip, char* port, char* data) {
+    int sockfd;
+    struct addrinfo hints;
+    struct addrinfo* addr_info;
+    int bytes_sent;
+    int len = strlen(data);
+    idr_udp_send_res* send_res = (idr_udp_send_res*) malloc(sizeof(idr_udp_send_res));
+    
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_DGRAM;
+    
+    int res = getaddrinfo(ip, port, &hints, &addr_info);
+    if (res == -1) {
+        send_res->result = res;
+        send_res->err = errno;
+    } 
+
+    sockfd = socket(addr_info->ai_family, addr_info->ai_socktype, addr_info->ai_protocol);
+
+    while (bytes_sent != len) {
+        res = sendto(sockfd, data + bytes_sent, len - bytes_sent, 0, addr_info->ai_addr,
+                     addr_info->ai_addrlen);
+
+        if (res == -1) {
+            send_res->result = -1;
+            send_res->err = errno;
+        }
+        bytes_sent += res;
+    }
+
+    close(sockfd);
+    return send_res;
+     
+}
+
+int idrnet_get_udp_send_result(void* udp_send_res) {
+    return ((idr_udp_send_res*) udp_send_res)->result;
+}
+
+int idrnet_get_udp_send_err(void* udp_send_res) {
+    return ((idr_udp_send_res*) udp_send_res)->err;
+}
+
+void idrnet_free_udp_send(void* udp_send) {
+    free(udp_send);
+}
+    
+void idrnet_free_udp_res(void* udp_res_struct) {
+    idr_udp_res* udp_res = (idr_udp_res*) udp_res_struct;
+    if (udp_res->fetched_data != NULL) {
+        free((char*) (udp_res->fetched_data));
+    }
+
+    if (udp_res->remote_host != NULL) {
+        free(udp_res->remote_host);
+    }
+    
+    free(udp_res_struct);
+}
+
+int idrnet_get_udp_result(void* udp_res_struct) {
+    return ((idr_udp_res*) udp_res_struct)->result;
+}
+
+int idrnet_get_udp_err(void* udp_res_struct) {
+    return ((idr_udp_res*) udp_res_struct)->err;
+}
+
+char* idrnet_get_udp_data(void* udp_res_struct) {
+    return ((idr_udp_res*) udp_res_struct)->fetched_data;
+}
+
+char* idrnet_get_udp_ip(void* udp_res_struct) {
+    idr_udp_res* i_res_struct = (idr_udp_res*) udp_res_struct;
+    // TODO: this is specific to ipv4, probably want to expand at some stage
+    struct sockaddr_in* addr = (struct sockaddr_in*) i_res_struct->remote_host;
+    char* printable_addr = malloc(sizeof(char) * INET_ADDRSTRLEN);
+    inet_ntop(i_res_struct->remote_host->ss_family, 
+      addr->sin_addr, printable_addr, sizeof(printable_addr));
+    return printable_addr;
+}
+
+int idrnet_get_udp_port(void* udp_res_struct) {
+    idr_udp_res* i_res_struct = (idr_udp_res*) udp_res_struct;
+    struct sockaddr_in* addr = (struct sockaddr_in*) i_res_struct->remote_host;
+    return ((int) (ntohs(addr->sin_port)));
+}
+
+int idrnet_listen(void* conn_info, char* ip, char* port) {
     //printf("Listen called\n");
     struct addrinfo* addr_inf;
     struct addrinfo hints;
@@ -136,7 +296,7 @@ int idrnet_close(void* conn_info) {
 }
 
 
-int idrnet_connect(void* conn_info, const char* ip, const char* port) {
+int idrnet_connect(void* conn_info, char* ip, char* port) {
     struct addrinfo* addr_inf;
     struct addrinfo hints;
     
@@ -174,7 +334,7 @@ int idrnet_connect(void* conn_info, const char* ip, const char* port) {
 }
 
 
-int idrnet_send(void* conn_info, const char* data) {
+int idrnet_send(void* conn_info, char* data) {
     int len;
     int bytes_sent;
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
@@ -232,7 +392,7 @@ int idrnet_get_last_error(void* conn_info) {
     return i_conn_info->last_error;
 }
 
-const char* idrnet_get_fetched_data(void* conn_info) {
+char* idrnet_get_fetched_data(void* conn_info) {
     idr_conn_info* i_conn_info = (idr_conn_info*) conn_info;
 //    printf("C: Fetched data %s\n", i_conn_info->fetched_data);
     return i_conn_info->fetched_data;
