@@ -1,9 +1,14 @@
 CC = gcc
 CFLAGS = `idris --include`
 
+all : idris_net.o bindata.o
+
 idris_net.o : idris_net.c idris_net.h
+
+bindata.o : bindata.c bindata.h
 
 clean: .PHONY
 	rm idris_net.o
+	rm bindata.o
 
 .PHONY : 
