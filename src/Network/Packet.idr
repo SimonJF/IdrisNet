@@ -66,6 +66,8 @@ rawSetBits start end dat = (RawSetBits start end dat)
 foreignCreatePacket : Int -> IO RawPacket
 foreignCreatePacket len = map RawPckt $ mkForeign (FFun "newPacket" [FInt] FPtr) len
 
+
+
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
     pckt <- foreignCreatePacket len
