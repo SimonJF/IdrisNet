@@ -32,7 +32,7 @@ foreignUDPGetIP (RR ptr) =
   mkForeign (FFun "idrnet_get_udp_ip" [FPtr] FString) ptr
 
 foreignUDPGetPort : UDPRecvResult -> IO Int
-foreignUDPGetIP (RR ptr) = 
+foreignUDPGetPort (RR ptr) = 
   mkForeign (FFun "idrnet_get_udp_port" [FPtr] FInt) ptr
 
 
