@@ -12,7 +12,7 @@ BytePos = Int
 
 
 data ActivePacket : Type where
-  ActivePacketRes : Ptr -> BytePos -> ActivePacket
+  ActivePacketRes : RawPacket -> BytePos -> ActivePacket
 
 data FailedPacket : Type where
   FailedPacketRes : (Maybe RawPacket) -> FailedPacket
@@ -63,3 +63,10 @@ rawSetBits : Int -> Int -> Int -> EffM IO [PACKET (ActivePacket)] [PACKET (Eithe
 rawSetBits start end dat = (RawSetBits start end dat)
 
 
+foreignCreatePacket : Int -> IO RawPacket
+foreignCreatePacket len = map RawPckt $ mkForeign (FFun "newPacket" [FInt] FPtr) len
+
+instance Handler Packet IO where
+  handle () (CreatePacket len) k = do
+    pckt <- foreignCreatePacket len
+    k (Right $ ActivePacketRes pckt 0) ()
