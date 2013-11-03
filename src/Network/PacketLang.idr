@@ -113,6 +113,10 @@ intToNat : Int -> Nat
 intToNat 0 = Z
 intToNat i = S (intToNat (i - 1))
 
+strLen : String -> Int
+strLen s = natToInt $ length s
+
+
 dlString : PacketLang
 dlString = do len <- bits 8
               str <- lstring (value len)
