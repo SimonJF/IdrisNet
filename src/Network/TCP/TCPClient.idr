@@ -1,7 +1,8 @@
 module Network.TCP.TCPClient
 import Effects
 import Network.TCP.TCPCommon
-
+import Network.Packet
+import Network.PacketLang
 -- D'OH
 %access public
 %link C "idris_net.o"
@@ -35,9 +36,15 @@ data TcpClient : Effect where
   AllocateState : TcpClient () (TCPClientRes StateAllocated) Bool
   -- Frees the state. Must be called at the end, in order to prevent memory leaks.
   FreeState : TcpClient (TCPClientRes NotConnected) () ()
+  -- Sends a PacketLang packet
+  SendPacket : (pl : PacketLang) -> (mkTy pl) -> TcpClient (TCPClientRes ConnectAttempted) 
+                                                           (TCPClientRes ConnectAttempted) ()
 
 TCPCLIENT: Type -> EFFECT
 TCPCLIENT t = MkEff t TcpClient
+
+--sendPacket : ActivePacket -> Eff IO [TCPCLIENT (TCPClientRes ConnectAttempted)] ()
+--sendPacket (ActivePacketRes
 
 private
 connect' : IPAddr -> Port -> EffM IO [TCPCLIENT (TCPClientRes StateAllocated)] [TCPCLIENT (TCPClientRes ConnectAttempted)] (Maybe ErrorCode)

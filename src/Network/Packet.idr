@@ -37,18 +37,30 @@ data Packet : Effect where
   -- Dumps packet to console. Not something we really want in the final thing...
   DumpPacket : Packet (ActivePacket) (ActivePacket) ()
   ReadPacket : (p : PacketLang) -> Packet (ActivePacket) 
-                                          (Either (FailedPacket) (ActivePacket)) (Either () (mkTy p))
+                                          (Either (FailedPacket) (ActivePacket)) 
+                                          (Either () (mkTy p))
   WritePacket : (p : PacketLang) -> (mkTy p) -> Packet (ActivePacket)
-                                                       (Either (FailedPacket) (ActivePacket)) ()
+                                                       (Either (FailedPacket) 
+                                                               (ActivePacket)) ()
 
   -- Sets a byte at the given position to the given value
-  RawSetByte : Int -> Int -> Packet (ActivePacket) (Either (FailedPacket) (ActivePacket)) ()
+  RawSetByte : Int -> Int -> Packet (ActivePacket) 
+                                    (Either (FailedPacket) 
+                                            (ActivePacket)) ()
+
   -- Sets the bits between start and end positions to the given value
-  RawSetBits : Int -> Int -> Int -> Packet (ActivePacket) (Either (FailedPacket) (ActivePacket)) ()
+  RawSetBits : Int -> Int -> Int -> Packet (ActivePacket) 
+                                           (Either (FailedPacket) 
+                                                   (ActivePacket)) ()
+
+  -- Returns a raw pointer to the current packet
+  GetRawPtr : Packet (ActivePacket) (ActivePacket) RawPacket
   
 PACKET : Type -> EFFECT
 PACKET t = MkEff t Packet
 
+getRawPacket : Eff IO [PACKET (ActivePacket)] RawPacket
+getRawPacket = GetRawPtr
 
 createPacket : Int -> EffM IO [PACKET ()] [PACKET (Either (FailedPacket) (ActivePacket))] ()
 createPacket len = (CreatePacket len)
@@ -127,27 +139,44 @@ marshalChunk (ActivePacketRes pckt pos) (LString n) str = do
   return len
 marshalChunk (ActivePacketRes pckt pos) (Prop _) x2 = return 0 -- We're not doing anything
   
+  
+marshalList : ActivePacket -> (pl : PacketLang) -> List (mkTy pl) -> IO Length
+marshalVect : ActivePacket -> (pl : PacketLang) -> Vect n (mkTy pl) -> IO Length
 
-
-marshalList : ActivePacket -> (pl : PacketLang) -> mkTy pl -> IO Length
-marshalList ap pl vals = map (\(ActivePacket pckt pos) -> pos) $ foldr (\a state -> marshalList' state pl) 
-
-marshalList' : ActivePacket -> (pl : PacketLang) -> mkTy pl -> IO ActivePacket
-marshalList' (ActivePacketRes pckt pos) pl val = do
-  marshal_len <- marshal (ActivePacketRes pckt pos) pl val
-  return (ActivePacket pckt (pos + marshal_len) + 1) 
-
-{- Marshal PacketLang to ByteData -}
 marshal : ActivePacket -> (pl : PacketLang) -> mkTy pl -> IO Length
 marshal ap (CHUNK c) c_dat = marshalChunk ap c c_dat
 marshal ap (IF True pl_t _) ite = marshal ap pl_t ite
 marshal ap (IF False _ pl_f) ite = marshal ap pl_f ite
 marshal ap (pl_1 // pl_2) x = either x (\x_l => marshal ap pl_1 x_l)
                                        (\x_r => marshal ap pl_2 x_r) 
-marshal ap (LIST _) x2 = ?marshal_rhs_5
-marshal ap (LISTN _ _) x2 = ?marshal_rhs_6
-marshal ap (_ >>= _) x2 = ?marshal_rhs_7
+marshal ap (LIST pl) xs = marshalList ap pl xs
+marshal ap (LISTN n pl) xs = marshalVect ap pl xs
+marshal ap (c >>= k) (x ** y) = do
+  len <- marshal ap c x
+  let (ActivePacketRes pckt pos) = ap
+  let ap2 = (ActivePacketRes pckt (pos + len)) 
+  len2 <- marshal ap2 (k x) y
+  return $ len + len2
 
+
+--marshalList : ActivePacket -> (pl : PacketLang) -> mkTy pl -> IO Length
+--marshalList ap pl vals = ?mv --map (\(ActivePacket pckt pos) -> pos) $ foldr (\a state -> marshalList' state pl) 
+
+
+{- Marshal PacketLang to ByteData -}
+--marshalVect : ActivePacket -> (pl : PacketLang) -> Vect n (mkTy pl) -> IO Length
+marshalVect ap pl [] = return 0
+marshalVect (ActivePacketRes pckt pos) pl (x::xs) = do
+  len <- marshal (ActivePacketRes pckt pos) pl x
+  marshalVect (ActivePacketRes pckt (pos + len)) pl xs
+
+
+
+--marshalList : ActivePacket -> (pl : PacketLang) -> List (mkTy pl) -> IO Length
+marshalList ap pl [] = return 0
+marshalList (ActivePacketRes pckt pos) pl (x::xs) = do
+  len <- marshal (ActivePacketRes pckt pos) pl x
+  marshalList (ActivePacketRes pckt (pos + len)) pl xs
 
 
 instance Handler Packet IO where
@@ -156,3 +185,5 @@ instance Handler Packet IO where
     k (Right $ ActivePacketRes pckt 0) ()
 
   handle (ActivePacketRes pos pckt) (WritePacket lang dat) k = ?mv
+
+

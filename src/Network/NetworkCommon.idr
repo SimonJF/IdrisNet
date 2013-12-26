@@ -23,7 +23,7 @@ data IPAddr = IPv4Addr Int Int Int Int
             | IPv6Addr 
 
 instance Show IPAddr where
-  show (IPv4Addr i1 i2 i3 i4) = concat $ intersperse "." $ map show [i1, i2, i3, i4]
+  show (IPv4Addr i1 i2 i3 i4) = concat $ Prelude.List.intersperse "." $ map show [i1, i2, i3, i4]
 
 foreignAllocateConnInfo : IO (Maybe RawConnInfo)
 foreignAllocateConnInfo = do

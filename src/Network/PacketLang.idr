@@ -1,4 +1,4 @@
-module IdrisNet.PacketLang 
+module Network.PacketLang 
 import Language.Reflection
 %access public
 
