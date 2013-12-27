@@ -21,7 +21,6 @@ ByteData = Int
 Length : Type
 Length = Int
 
-
 data ActivePacket : Type where
   ActivePacketRes : RawPacket -> BytePos -> ActivePacket
 
@@ -55,7 +54,9 @@ data Packet : Effect where
 
   -- Returns a raw pointer to the current packet
   GetRawPtr : Packet (ActivePacket) (ActivePacket) RawPacket
-  
+
+
+
 PACKET : Type -> EFFECT
 PACKET t = MkEff t Packet
 
@@ -88,6 +89,8 @@ rawSetBits : Int -> Int -> Int -> EffM IO [PACKET (ActivePacket)]
                                           [PACKET (Either (FailedPacket) (ActivePacket))] ()
 rawSetBits start end dat = (RawSetBits start end dat)
 
+foreignDestroyPacket : RawPacket -> IO ()
+foreignDestroyPacket (RawPckt pckt) = mkForeign (FFun "destroyPacket" [FPtr] FUnit) pckt
 
 foreignCreatePacket : Int -> IO RawPacket
 foreignCreatePacket len = map RawPckt $ mkForeign (FFun "newPacket" [FInt] FPtr) len
@@ -179,11 +182,31 @@ marshalList (ActivePacketRes pckt pos) pl (x::xs) = do
   marshalList (ActivePacketRes pckt (pos + len)) pl xs
 
 
+
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
     pckt <- foreignCreatePacket len
     k (Right $ ActivePacketRes pckt 0) ()
 
-  handle (ActivePacketRes pos pckt) (WritePacket lang dat) k = ?mv
+  handle (ActivePacketRes pckt pos) (WritePacket lang dat) k = do
+    len <- marshal (ActivePacketRes pckt pos) lang dat
+    k (Right $ ActivePacketRes pckt (pos + len)) ()
+
+  handle (ActivePacketRes pckt pos) (DestroyPacket) k = do
+    foreignDestroyPacket pckt
+    k () ()
+
+  handle (ActivePacketRes pckt p_pos) (RawSetByte pos val) k = do
+    foreignSetByte pckt pos val
+    k (Right $ ActivePacketRes pckt p_pos) ()
+
+  handle (ActivePacketRes pckt p_pos) (RawSetBits start end val) k = do
+    foreignSetBits pckt start end val
+    k (Right $ ActivePacketRes pckt p_pos) ()
+
+  handle (ActivePacketRes pckt p_pos) (GetRawPtr) k =
+    k (ActivePacketRes pckt p_pos) pckt
+
+
 
 
