@@ -15,6 +15,7 @@ data Proposition : Type where
 
 -- Bounded integers
 data Bounded : Int -> Type where
+-- TODO: The so proof should be a proof that x fits into i bits
   BInt : (x : Int) -> so (x < i) -> Bounded i
 
 -- Primitive Binary Chunks
@@ -101,8 +102,8 @@ syntax check [p] = CHUNK (Prop (P_BOOL p))
 syntax lstring [n] = CHUNK (LString n)
 syntax cstring = CHUNK (CString)
 
-value : Bounded i -> Int
-value (BInt i p) = i
+val : Bounded i -> Int
+val (BInt i p) = i
 
 -- grrrrr, hackity hack
 natToInt : Nat -> Int
@@ -119,8 +120,8 @@ strLen s = natToInt $ length s
 
 dlString : PacketLang
 dlString = do len <- bits 8
-              str <- lstring (value len)
-              check ((natToInt . Prelude.Strings.length $ str) == (value len))
+              str <- lstring (val len)
+              check ((natToInt . Prelude.Strings.length $ str) == (val len))
 
 --bit : {w : Int} -> (i : Int) -> (p : (so (i < w))) -> Chunk
 --bit i p = Bit i p
@@ -134,11 +135,11 @@ myBounded = BInt 0 oh
 
 stringFormat : PacketLang
 --stringFormat i = (bits i) >>= 
---                 (\len => (check (value len > 0)) >>= \_ => lstring (value len))
+--                 (\len => (check (val len > 0)) >>= \_ => lstring (val len))
 stringFormat = do len <- bits 5
-                  check ((value len) > 0)
+                  check ((val len) > 0)
                   --let len = myBounded
-                  lstring (value len)
+                  lstring (val len)
 -- ICMP Stuff
 -- (Bit of a failed experiment, as we'll also need to implement all of IP...)
 ICMPType : Type
@@ -193,7 +194,7 @@ validCode _ _ = False
 ICMP : PacketLang
 ICMP = do type <- bits 8
           code <- bits 8
-          check (validCode (value type) (value code))
+          check (validCode (val type) (val code))
           checksum <- bits 16
 -}
 

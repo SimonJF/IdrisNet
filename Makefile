@@ -1,5 +1,12 @@
+all:
+	idris --build idrisnet.ipkg
+	idris --install idrisnet.ipkg
+
+build:
+	idris --build idrisnet.ipkg
+
 install:
-	idris --install idris_net.ipkg
+	idris --install idrisnet.ipkg
 
 clean:
-	idris --clean idris_net.ipkg
+	idris --clean idrisnet.ipkg

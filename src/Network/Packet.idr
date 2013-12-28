@@ -5,6 +5,8 @@ import Effects
 
 %access public
 
+%include C "bindata.h"
+%link C "bindata.o"
 -- Pointer to the raw packet
 data RawPacket = RawPckt Ptr
 
@@ -32,6 +34,8 @@ data Packet : Effect where
   CreatePacket : Int -> Packet () 
                                (Either (FailedPacket) (ActivePacket)) ()
   DestroyPacket : Packet (ActivePacket) () ()
+  -- TODO: Inelegant, would be nice to consolidate (much like w/ SQLite)
+  DestroyFailedPacket : Packet (FailedPacket) () ()
 
   -- Dumps packet to console. Not something we really want in the final thing...
   DumpPacket : Packet (ActivePacket) (ActivePacket) ()
@@ -69,6 +73,9 @@ createPacket len = (CreatePacket len)
 destroyPacket : EffM IO [PACKET (ActivePacket)] [PACKET ()] ()
 destroyPacket = DestroyPacket
 
+destroyFailedPacket : EffM IO [PACKET (FailedPacket)] [PACKET ()] ()
+destroyFailedPacket = DestroyFailedPacket
+
 dumpPacket : Eff IO [PACKET (ActivePacket)] ()
 dumpPacket = DumpPacket
 
@@ -90,7 +97,7 @@ rawSetBits : Int -> Int -> Int -> EffM IO [PACKET (ActivePacket)]
 rawSetBits start end dat = (RawSetBits start end dat)
 
 foreignDestroyPacket : RawPacket -> IO ()
-foreignDestroyPacket (RawPckt pckt) = mkForeign (FFun "destroyPacket" [FPtr] FUnit) pckt
+foreignDestroyPacket (RawPckt pckt) = mkForeign (FFun "freePacket" [FPtr] FUnit) pckt
 
 foreignCreatePacket : Int -> IO RawPacket
 foreignCreatePacket len = map RawPckt $ mkForeign (FFun "newPacket" [FInt] FPtr) len
@@ -115,10 +122,17 @@ foreignGetBits : RawPacket -> Position -> Position -> IO ByteData
 foreignGetBits (RawPckt pckt) start end =
   mkForeign (FFun "getPacketBits" [FPtr, FInt, FInt] FInt) pckt start end
 
+foreignDumpPacket : RawPacket -> Position -> IO ()
+foreignDumpPacket (RawPckt pckt) len =
+  mkForeign (FFun "dumpPacket" [FPtr, FInt] FUnit) pckt len
+
 {- Chunk length in bits -}
 chunkLength : (c : Chunk) -> chunkTy c -> Int
 chunkLength (Bit w p) x1 = w
-chunkLength CString str = 8 * (strLen . fst $ span (== '\0') str)
+-- TODO: This doesn't take into account if there's a null character
+-- within the string itself. I had something nice using span earlier,
+-- but it didn't work (probably due to a library bug)
+chunkLength CString str = 8 * (strLen str)
 chunkLength (LString len) str = 8 * len 
 chunkLength (Prop _) x1 = 0 -- Not written to the packet
 
@@ -134,8 +148,10 @@ marshalChunk (ActivePacketRes pckt pos) (Bit w p) (BInt dat p2) = do
   return len
 marshalChunk (ActivePacketRes pckt pos) CString str = do
   let len = chunkLength CString str
+  putStrLn $ "CStr length: " ++ (show len)
   foreignSetString pckt pos str len '\0'
   return len
+-- TODO: This is wrong, need to set the length in there explicitly
 marshalChunk (ActivePacketRes pckt pos) (LString n) str = do
   let len = chunkLength (LString n) str 
   foreignSetString pckt pos str len '\0'
@@ -171,17 +187,15 @@ marshal ap (c >>= k) (x ** y) = do
 marshalVect ap pl [] = return 0
 marshalVect (ActivePacketRes pckt pos) pl (x::xs) = do
   len <- marshal (ActivePacketRes pckt pos) pl x
-  marshalVect (ActivePacketRes pckt (pos + len)) pl xs
-
-
+  xs_len <- marshalVect (ActivePacketRes pckt (pos + len)) pl xs
+  return $ len + xs_len
 
 --marshalList : ActivePacket -> (pl : PacketLang) -> List (mkTy pl) -> IO Length
 marshalList ap pl [] = return 0
 marshalList (ActivePacketRes pckt pos) pl (x::xs) = do
   len <- marshal (ActivePacketRes pckt pos) pl x
-  marshalList (ActivePacketRes pckt (pos + len)) pl xs
-
-
+  xs_len <- marshalList (ActivePacketRes pckt (pos + len)) pl xs
+  return $ len + xs_len
 
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
@@ -190,10 +204,18 @@ instance Handler Packet IO where
 
   handle (ActivePacketRes pckt pos) (WritePacket lang dat) k = do
     len <- marshal (ActivePacketRes pckt pos) lang dat
+    putStrLn $ "Len: " ++ (show len)
     k (Right $ ActivePacketRes pckt (pos + len)) ()
 
   handle (ActivePacketRes pckt pos) (DestroyPacket) k = do
     foreignDestroyPacket pckt
+    k () ()
+
+  handle (FailedPacketRes (Just pckt)) (DestroyFailedPacket) k = do
+    foreignDestroyPacket pckt
+    k () ()
+
+  handle (FailedPacketRes Nothing) (DestroyFailedPacket) k = 
     k () ()
 
   handle (ActivePacketRes pckt p_pos) (RawSetByte pos val) k = do
@@ -207,6 +229,6 @@ instance Handler Packet IO where
   handle (ActivePacketRes pckt p_pos) (GetRawPtr) k =
     k (ActivePacketRes pckt p_pos) pckt
 
-
-
-
+  handle (ActivePacketRes pckt p_pos) (DumpPacket) k = do
+    foreignDumpPacket pckt p_pos
+    k (ActivePacketRes pckt p_pos) ()

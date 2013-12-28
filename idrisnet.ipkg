@@ -1,8 +1,8 @@
 package idrisnet
 
 sourcedir = src
-modules =  Network.TCP.TCPCommon, Network.TCP.TCPClient, Network.TCP.TCPServer, Network.NetworkCommon, Network.UDP.UDPClient, Network.UDP.UDPServer, Network.PacketLang
+modules =  Network.TCP.TCPCommon, Network.TCP.TCPClient, Network.TCP.TCPServer, Network.NetworkCommon, Network.UDP.UDPClient, Network.UDP.UDPServer, Network.PacketLang, Network.Packet
 opts = "-p effects"
 makefile = MakefileIdrisNetC
 
-objs = idris_net.o, idris_net.h
+objs = idris_net.o, idris_net.h, bindata.o, bindata.h
