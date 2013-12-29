@@ -1,5 +1,6 @@
 module Network.PacketLang 
 import Language.Reflection
+
 %access public
 
 -- Start off with a direct translation of the data types from the 
@@ -13,10 +14,42 @@ data Proposition : Type where
   P_AND : Proposition -> Proposition -> Proposition
   P_OR : Proposition -> Proposition -> Proposition
 
--- Bounded integers
+
+-- grrrrr, hackity hack
+natToInt : Nat -> Int
+natToInt Z = 0
+natToInt (S k) = 1 + (natToInt k)
+
+intToNat : Int -> Nat
+intToNat 0 = Z
+intToNat i = S (intToNat (i - 1))
+
+strLen : String -> Int
+strLen s = natToInt $ length s
+
+{-
+data Fits : Int -> Int -> Type where
+  MkFits : (a : Int) -> 
+           (b : Int) -> 
+           { default tactics {compute; refine oh; solve;}
+    prf : so ((log2 (intToNat a) + 1) <= (intToNat b))} -> Fits a b
+    -}
+private
+{-
+fits : (x : Int) -> (b : Int) -> Bool
+fits x bits = ((log2 x_nat) + 1) < ((log2 b_nat) + 1)
+  where x_nat = intToNat x
+        b_nat = intToNat bits
+        -}-- Bounded integers
 data Bounded : Int -> Type where
 -- TODO: The so proof should be a proof that x fits into i bits
-  BInt : (x : Int) -> so (x < i) -> Bounded i
+  --BInt : (x : Int) -> (prf : Fits x i) -> Bounded i
+  BInt : (x : Int) -> (prf : so (x < i)) -> Bounded i
+
+val : Bounded i -> Int
+val (BInt i p) = i
+
+
 
 -- Primitive Binary Chunks
 data Chunk : Type where
@@ -102,22 +135,6 @@ syntax check [p] = CHUNK (Prop (P_BOOL p))
 syntax lstring [n] = CHUNK (LString n)
 syntax cstring = CHUNK (CString)
 
-val : Bounded i -> Int
-val (BInt i p) = i
-
--- grrrrr, hackity hack
-natToInt : Nat -> Int
-natToInt Z = 0
-natToInt (S k) = 1 + (natToInt k)
-
-intToNat : Int -> Nat
-intToNat 0 = Z
-intToNat i = S (intToNat (i - 1))
-
-strLen : String -> Int
-strLen s = natToInt $ length s
-
-
 dlString : PacketLang
 dlString = do len <- bits 8
               str <- lstring (val len)
@@ -128,10 +145,10 @@ dlString = do len <- bits 8
 
 --bits : Int -> PacketLang
 --bits n = CHUNK (bit n)
-
+{-
 myBounded : Bounded 5
-myBounded = BInt 0 oh
-
+myBounded = BInt 0 (MkFits 0 5)
+-}
 
 stringFormat : PacketLang
 --stringFormat i = (bits i) >>= 

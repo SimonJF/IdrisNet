@@ -136,6 +136,20 @@ chunkLength CString str = 8 * (strLen str)
 chunkLength (LString len) str = 8 * len 
 chunkLength (Prop _) x1 = 0 -- Not written to the packet
 
+{-
+vectBitLength : (p : PacketLang) -> mkTy p -> Int
+vectBitLength pl [] = 0
+vectBitLength pl (x::xs) = ?vbl_rhs
+-}
+
+bitLength : (p : PacketLang) -> (mkTy p) -> Int
+bitLength (CHUNK c) x = chunkLength c x
+bitLength (IF False yes no) x = bitLength no x
+bitLength (IF True yes no) x = bitLength yes x
+bitLength (y // z) x = ?bitLength_rhs_3
+bitLength (LIST y) x = ?bitLength_rhs_4
+bitLength (LISTN n y) x = ?bitLength_rhs_5
+bitLength (p >>= f) x = ?bitLength_rhs_6
 
 {- Marshalling code -}
 
@@ -196,6 +210,25 @@ marshalList (ActivePacketRes pckt pos) pl (x::xs) = do
   len <- marshal (ActivePacketRes pckt pos) pl x
   xs_len <- marshalList (ActivePacketRes pckt (pos + len)) pl xs
   return $ len + xs_len
+
+{- Unmarshalling Code -}
+unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl))
+unmarshal ap (CHUNK c) = ?unmarshal_rhs_1
+unmarshal ap (IF False yes no) = unmarshal ap no
+unmarshal ap (IF True yes no) = unmarshal ap yes
+-- Attempt x, if correct then return x.
+-- If not, try y. If correct, return y. 
+-- If neither correct, return Nothing.
+unmarshal ap (x // y) = do
+-- TODO: There's likely a more idiomatic way to do this... IO makes it trickier
+  x_res <- unmarshal ap x
+  y_res <- unmarshal ap y
+  --return Nothing
+  return $ maybe (maybe Nothing (\y_res' => Just $ Right y_res') y_res)
+                                (\x_res' => Just $ Left x_res') x_res
+unmarshal ap (LIST x) = ?unmarshal_rhs_4
+unmarshal ap (LISTN n x) = ?unmarshal_rhs_5
+unmarshal ap (p >>= f) = ?unmarshal_rhs_6
 
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
