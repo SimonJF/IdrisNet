@@ -24,7 +24,7 @@ Length : Type
 Length = Int
 
 data ActivePacket : Type where
-  ActivePacketRes : RawPacket -> BytePos -> ActivePacket
+  ActivePacketRes : RawPacket -> BytePos -> Length -> ActivePacket
 
 data FailedPacket : Type where
   FailedPacketRes : (Maybe RawPacket) -> FailedPacket
@@ -127,7 +127,7 @@ foreignDumpPacket (RawPckt pckt) len =
   mkForeign (FFun "dumpPacket" [FPtr, FInt] FUnit) pckt len
 
 {- Chunk length in bits -}
-chunkLength : (c : Chunk) -> chunkTy c -> Int
+chunkLength : (c : Chunk) -> chunkTy c -> Length
 chunkLength (Bit w p) x1 = w
 -- TODO: This doesn't take into account if there's a null character
 -- within the string itself. I had something nice using span earlier,
@@ -156,21 +156,21 @@ bitLength (p >>= f) x = ?bitLength_rhs_6
 {- Marshal Chunks to ByteData -}
 
 marshalChunk : ActivePacket -> (c : Chunk) -> (chunkTy c) -> IO Length
-marshalChunk (ActivePacketRes pckt pos) (Bit w p) (BInt dat p2) = do
+marshalChunk (ActivePacketRes pckt pos p_len) (Bit w p) (BInt dat p2) = do
   let len = chunkLength (Bit w p) (BInt dat p2)
   foreignSetBits pckt pos (pos + w) dat
   return len
-marshalChunk (ActivePacketRes pckt pos) CString str = do
+marshalChunk (ActivePacketRes pckt pos p_len) CString str = do
   let len = chunkLength CString str
   putStrLn $ "CStr length: " ++ (show len)
   foreignSetString pckt pos str len '\0'
   return len
 -- TODO: This is wrong, need to set the length in there explicitly
-marshalChunk (ActivePacketRes pckt pos) (LString n) str = do
+marshalChunk (ActivePacketRes pckt pos p_len) (LString n) str = do
   let len = chunkLength (LString n) str 
   foreignSetString pckt pos str len '\0'
   return len
-marshalChunk (ActivePacketRes pckt pos) (Prop _) x2 = return 0 -- We're not doing anything
+marshalChunk (ActivePacketRes pckt pos p_len) (Prop _) x2 = return 0 -- We're not doing anything
   
   
 marshalList : ActivePacket -> (pl : PacketLang) -> List (mkTy pl) -> IO Length
@@ -186,8 +186,8 @@ marshal ap (LIST pl) xs = marshalList ap pl xs
 marshal ap (LISTN n pl) xs = marshalVect ap pl xs
 marshal ap (c >>= k) (x ** y) = do
   len <- marshal ap c x
-  let (ActivePacketRes pckt pos) = ap
-  let ap2 = (ActivePacketRes pckt (pos + len)) 
+  let (ActivePacketRes pckt pos p_len) = ap
+  let ap2 = (ActivePacketRes pckt (pos + len) p_len) 
   len2 <- marshal ap2 (k x) y
   return $ len + len2
 
@@ -199,48 +199,128 @@ marshal ap (c >>= k) (x ** y) = do
 {- Marshal PacketLang to ByteData -}
 --marshalVect : ActivePacket -> (pl : PacketLang) -> Vect n (mkTy pl) -> IO Length
 marshalVect ap pl [] = return 0
-marshalVect (ActivePacketRes pckt pos) pl (x::xs) = do
-  len <- marshal (ActivePacketRes pckt pos) pl x
-  xs_len <- marshalVect (ActivePacketRes pckt (pos + len)) pl xs
+marshalVect (ActivePacketRes pckt pos p_len) pl (x::xs) = do
+  len <- marshal (ActivePacketRes pckt pos p_len) pl x
+  xs_len <- marshalVect (ActivePacketRes pckt (pos + len) p_len) pl xs
   return $ len + xs_len
 
 --marshalList : ActivePacket -> (pl : PacketLang) -> List (mkTy pl) -> IO Length
 marshalList ap pl [] = return 0
-marshalList (ActivePacketRes pckt pos) pl (x::xs) = do
-  len <- marshal (ActivePacketRes pckt pos) pl x
-  xs_len <- marshalList (ActivePacketRes pckt (pos + len)) pl xs
+marshalList (ActivePacketRes pckt pos p_len) pl (x::xs) = do
+  len <- marshal (ActivePacketRes pckt pos p_len) pl x
+  xs_len <- marshalList (ActivePacketRes pckt (pos + len) p_len) pl xs
   return $ len + xs_len
 
 {- Unmarshalling Code -}
-unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl))
-unmarshal ap (CHUNK c) = ?unmarshal_rhs_1
+unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
+
+unmarshalCString' : ActivePacket ->  
+                    Int -> 
+                    IO (Maybe (List Char, Length))
+unmarshalCString' (ActivePacketRes pckt pos p_len) i with (i < p_len)
+  -- Firstly we need to check whether we're within the bounds of the packet.
+  -- If not, then the parse has failed. 
+  -- If we're within bounds, we need to read the next character, and recursively
+  -- call.
+  | True = do
+    next_byte <- foreignGetBits pckt pos (pos + 8)
+    let char = chr next_byte
+    -- If we're up to a NULL, we've read the string
+    if (char == '\0') then 
+      return $ Just ([], i + 8)
+    else do -- Otherwise, recursively call
+      -- We're assuming sizeof(char) = 8 here
+      rest <- unmarshalCString' (ActivePacketRes pckt (pos + 8) p_len) (i + 8)
+      case rest of Just (xs, i) => return $ Just (char::xs, i + 8)
+                   Nothing => return Nothing
+  | False = return Nothing
+
+unmarshalCString : ActivePacket -> IO (Maybe (String, Length))
+unmarshalCString (ActivePacketRes pckt pos p_len) = do
+  res <- unmarshalCString' (ActivePacketRes pckt pos p_len) 0
+  case res of 
+       Just (chrs, len) => return $ Just (pack chrs, len) 
+       Nothing => return Nothing
+
+-- TODO: Maybe recurse using Nat instead of Int (for sake of totality) but we need to use as an Int
+unmarshalLString' : ActivePacket -> Int -> IO (List Char)
+unmarshalLString' ap 0 = return []
+unmarshalLString' (ActivePacketRes pckt pos p_len) n = do
+  next_byte <- foreignGetBits pckt pos (pos + 8)
+  let char = chr next_byte
+  rest <- unmarshalLString' (ActivePacketRes pckt (pos + 8) p_len) (n - 1)
+  return $ (char :: rest)
+
+-- We've already bounds-checked the LString against the packet length,
+-- meaning it's safe to just return a string.
+unmarshalLString : ActivePacket -> Int -> IO String
+unmarshalLString ap n = map pack (unmarshalLString' ap n)
+
+unmarshalChunk : ActivePacket -> (c : Chunk) -> IO (Maybe (chunkTy c, Length))
+unmarshalChunk x (Bit width _) = ?mv
+unmarshalChunk ap CString = unmarshalCString ap
+unmarshalChunk (ActivePacketRes pckt pos p_len) (LString n) =
+  -- Do bounds checking now, if it passes then we're golden later on
+  if pos + (8 * n) < p_len then do
+    res <- unmarshalLString (ActivePacketRes pckt pos p_len) n
+    return $ Just (res, (8 * n))
+  else
+    return Nothing
+unmarshalChunk x (Prop P) = ?unmarshalChunk_rhs_4
+
+-- TODO: There is an ambiguity problem here.
+-- Consider the case where we have a packet description of LIST String, String, String, Int.
+-- The packet decoding would fail: we'd include the two strings as part of the list.
+-- This is a tricky one to resolve, since we're doing stream parsing as opposed to having
+-- the entire list of tokens available to us. 
+-- Needs some extra thought, and is a big problem. But it's not covered in the original IP DSL, 
+--so we're OK just for now, I think.
+-- Also, this is a horrible hack because of some problem with typeclass resolution.
+-- Turns out I can't actually do a case statement within unmarshalList, so it has to be extracted
+-- into a second function.
+-- Also, I'm just typing away right now since it's easier than writing Actual Code
+mutual
+  unmarshalList : ActivePacket -> (pl : PacketLang) -> IO (List (mkTy pl), Length)
+  unmarshalList ap pl = 
+    let (ActivePacketRes pckt pos p_len) = ap in
+    if (pos < p_len) then do
+      item_res <- unmarshal ap pl
+      unmarshalList' ap pl item_res
+    else return ([], 0) -- Reached end of packet
+
+  unmarshalList' : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length) -> IO (List (mkTy pl), Length)
+  unmarshalList' (ActivePacketRes pckt pos p_len) pl (Just (res, len)) = ?shove_this_typeclass_resolution_error_up_your_arse
+ --   unmarshalList (ActivePacketRes pckt (pos + len) p_len) pl >>= (\(rest, rest_len) =>
+   --  return (res :: rest, len + rest_len))
+  unmarshalList' (ActivePacketRes pckt pos p_len) pl Nothing = return ([], 0)
+
+--unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
+unmarshal ap (CHUNK c) = unmarshalChunk ap c
 unmarshal ap (IF False yes no) = unmarshal ap no
 unmarshal ap (IF True yes no) = unmarshal ap yes
 -- Attempt x, if correct then return x.
 -- If not, try y. If correct, return y. 
 -- If neither correct, return Nothing.
 unmarshal ap (x // y) = do
--- TODO: There's likely a more idiomatic way to do this... IO makes it trickier
   x_res <- unmarshal ap x
   y_res <- unmarshal ap y
-  --return Nothing
-  return $ maybe (maybe Nothing (\y_res' => Just $ Right y_res') y_res)
-                                (\x_res' => Just $ Left x_res') x_res
-unmarshal ap (LIST x) = ?unmarshal_rhs_4
-unmarshal ap (LISTN n x) = ?unmarshal_rhs_5
+  return $ maybe (maybe Nothing (\(y_res', len) => Just $ (Right y_res', len)) y_res)
+                                (\(x_res', len) => Just $ (Left x_res', len)) x_res
+unmarshal ap (LIST pl) = map Just (unmarshalList ap pl)
+unmarshal ap (LISTN n pl) = ?unmarshal_rhs_5
 unmarshal ap (p >>= f) = ?unmarshal_rhs_6
 
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
     pckt <- foreignCreatePacket len
-    k (Right $ ActivePacketRes pckt 0) ()
+    k (Right $ ActivePacketRes pckt 0 len) ()
 
-  handle (ActivePacketRes pckt pos) (WritePacket lang dat) k = do
-    len <- marshal (ActivePacketRes pckt pos) lang dat
+  handle (ActivePacketRes pckt pos p_len) (WritePacket lang dat) k = do
+    len <- marshal (ActivePacketRes pckt pos p_len) lang dat
     putStrLn $ "Len: " ++ (show len)
-    k (Right $ ActivePacketRes pckt (pos + len)) ()
+    k (Right $ ActivePacketRes pckt (pos + len) p_len) ()
 
-  handle (ActivePacketRes pckt pos) (DestroyPacket) k = do
+  handle (ActivePacketRes pckt pos p_len) (DestroyPacket) k = do
     foreignDestroyPacket pckt
     k () ()
 
@@ -251,17 +331,17 @@ instance Handler Packet IO where
   handle (FailedPacketRes Nothing) (DestroyFailedPacket) k = 
     k () ()
 
-  handle (ActivePacketRes pckt p_pos) (RawSetByte pos val) k = do
+  handle (ActivePacketRes pckt p_pos p_len) (RawSetByte pos val) k = do
     foreignSetByte pckt pos val
-    k (Right $ ActivePacketRes pckt p_pos) ()
+    k (Right $ ActivePacketRes pckt p_pos p_len) ()
 
-  handle (ActivePacketRes pckt p_pos) (RawSetBits start end val) k = do
+  handle (ActivePacketRes pckt p_pos p_len) (RawSetBits start end val) k = do
     foreignSetBits pckt start end val
-    k (Right $ ActivePacketRes pckt p_pos) ()
+    k (Right $ ActivePacketRes pckt p_pos p_len) ()
 
-  handle (ActivePacketRes pckt p_pos) (GetRawPtr) k =
-    k (ActivePacketRes pckt p_pos) pckt
+  handle (ActivePacketRes pckt p_pos p_len) (GetRawPtr) k =
+    k (ActivePacketRes pckt p_pos p_len) pckt
 
-  handle (ActivePacketRes pckt p_pos) (DumpPacket) k = do
+  handle (ActivePacketRes pckt p_pos p_len) (DumpPacket) k = do
     foreignDumpPacket pckt p_pos
-    k (ActivePacketRes pckt p_pos) ()
+    k (ActivePacketRes pckt p_pos p_len) ()
