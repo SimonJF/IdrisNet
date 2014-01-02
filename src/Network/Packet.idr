@@ -275,10 +275,8 @@ unmarshalChunk x (Prop P) = ?unmarshalChunk_rhs_4
 -- the entire list of tokens available to us. 
 -- Needs some extra thought, and is a big problem. But it's not covered in the original IP DSL, 
 --so we're OK just for now, I think.
--- Also, this is a horrible hack because of some problem with typeclass resolution.
--- Turns out I can't actually do a case statement within unmarshalList, so it has to be extracted
--- into a second function.
--- Also, I'm just typing away right now since it's easier than writing Actual Code
+-- There's a nasty typeclass resolution error here, so instead of pattern matching on (rest, rest'),
+-- I have to use fst and snd. C'est la vie...
 mutual
   unmarshalList : ActivePacket -> (pl : PacketLang) -> IO (List (mkTy pl), Length)
   unmarshalList ap pl = 
@@ -289,12 +287,84 @@ mutual
     else return ([], 0) -- Reached end of packet
 
   unmarshalList' : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length) -> IO (List (mkTy pl), Length)
-  unmarshalList' (ActivePacketRes pckt pos p_len) pl (Just (res, len)) = ?shove_this_typeclass_resolution_error_up_your_arse
- --   unmarshalList (ActivePacketRes pckt (pos + len) p_len) pl >>= (\(rest, rest_len) =>
-   --  return (res :: rest, len + rest_len))
-  unmarshalList' (ActivePacketRes pckt pos p_len) pl Nothing = return ([], 0)
+  unmarshalList' (ActivePacketRes pckt pos p_len) pl (Just (res, len)) = do
+    x <- unmarshalList (ActivePacketRes pckt (pos + len) p_len) pl 
+    let rest = fst x
+    let rest_len = snd x
+    return (res :: rest, len + rest_len)
+  unmarshalList' (ActivePacketRes pckt pos p_len) pl Nothing = return ([], 0) -- Parse of item failed: end of list
 
+-- Once again, typeclass resolution bug here. Can't determine the monad we're in (I suppose
+-- that's because there's an IO and a Maybe)
+-- ...hence why we have three increasingly hideous functions...
+-- ...which have exactly the same f**king typeclass resolution error
+{-
+mutual
+  unmarshalVect : ActivePacket -> (pl : PacketLang) -> (len : Nat) -> IO (Maybe (Vect len (mkTy pl), Length))
+  unmarshalVect ap pl Z = return $ Just ([], 0)
+  unmarshalVect ap pl (S k) = unmarshal ap pl >>= unmarshalVect' ap pl (S k)
+
+  unmarshalVect' : ActivePacket -> (pl : PacketLang) -> (len : Nat) -> Maybe (mkTy pl, Length) -> IO (Maybe (Vect len (mkTy pl), Length))
+  unmarshalVect' ap pl Z _ = return Nothing -- Shouldn't happen
+  unmarshalVect' ap pl _ Nothing = return Nothing -- parse failed
+  unmarshalVect' (ActivePacketRes pckt pos p_len) pl (S k) (Just (res, len)) = do
+    res <- unmarshalVect (ActivePacketRes pckt (pos + len) p_len) pl k 
+    unmarshalVect'' (ActivePacketRes pckt (pos + len) p_len) pl k (Just (res, len)) res
+
+  unmarshalVect'' : ActivePacket -> 
+                    (pl : PacketLang) -> 
+                    (len : Nat) -> 
+                    Maybe (mkTy pl, Length) -> 
+                    Maybe (Vect len' (mkTy pl), Length) -> -- wrong, should be less than n
+                    Maybe (Vect len (mkTy pl), Length)
+  unmarshalVect'' _ _ _ _ Nothing = return Nothing -- Some failure later in the list
+  unmarshalVect'' _ _ _ Nothing _ = return Nothing -- Shouldn't happen, included for sake of totality
+  unmarshalVect'' (ActivePacketRes pckt pos p_len) pl Z _ Nothing = return Nothing -- Shouldn't happen
+  unmarshalVect'' (ActivePacketRes pckt pos p_len) pl (S k) (Just (res, len)) (Just (rest, rest_len)) = 
+    return $ Just (res :: rest, rest + rest_len)
+    -}
+
+{-
+unmarshalVect ap pl Z = return $ Just ([], 0)
+unmarshalVect (ActivePacketRes pckt pos p_len) pl (S k) = do
+  -- Unmarshal item at position. If it's not there, parse has failed
+    x <- unmarshal (ActivePacketRes pckt pos p_len) pl
+    maybe Nothing (\(res, res_len) => ?mv) x
+  where unmarshalVect' : (mkTy pl) -> Length -> IO (Maybe (Vect len (mkTy pl), Length))
+        unmarshalVect' res res_len = ?mv -- do 
+          -}
+          {-
+unmarshalVect : ActivePacket -> (pl : PacketLang) -> (len : Nat) -> IO (Maybe (Vect len (mkTy pl), Length))
+unmarshalVect _ _ Z = return $ Just ([], 0)
+unmarshalVect (ActivePacketRes pckt pos p_len) pl (S k) = if (pos >= p_len) then return Nothing else do
+  item_res <- unmarshal (ActivePacketRes pckt pos p_len) pl
+  case item_res of
+       Just (res, len) => do
+         rest_res <- unmarshalVect (ActivePacketRes pckt (pos + len) p_len) pl k 
+         case rest_res of
+              Just (rest, rest_len) => return $ Just (res :: rest, len + rest_len)
+              Nothing => return Nothing -- error later on
+       Nothing => return Nothing -- Parse error on this item
+       -} -- Not for now.
 --unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
+unmarshalBind : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
+unmarshalBind (ActivePacketRes pckt pos p_len) (c >>= k) = 
+  unmarshal (ActivePacketRes pckt pos p_len) c >>= unmarshalBind' c
+  where unmarshalBind' : (pl' : PacketLang) -> Maybe (mkTy pl', Length) -> IO (Maybe (mkTy pl, Length))
+        unmarshalBind' _ Nothing = return Nothing
+        unmarshalBind' _ (Just (res, len)) = ?mv --do res2 <- unmarshal (ActivePacketRes pckt (pos + len) p_len) (k res)
+                                               -- unmarshalBind'' c (k res) (Just (res, len)) res2
+        -- ARGH ARGH THIS IS KILLING ME. GIVE ME MY CASE STATEMENTS BACK :'(
+        unmarshalBind'' : (pl' : PacketLang) -> 
+                          (pl'' : PacketLang) -> 
+                          Maybe (mkTy pl', Length) -> 
+                          Maybe (mkTy pl'', Length) -> 
+                          IO (Maybe (mkTy pl, Length))
+        unmarshalBind'' _ _ (Just (res, res_len)) (Just (res2, res2_len)) =  ?mv
+ --         return $ Just ((res ** res2), res_len + res2_len)
+        unmarshalBind'' _ _ _ _ = return Nothing
+        
+
 unmarshal ap (CHUNK c) = unmarshalChunk ap c
 unmarshal ap (IF False yes no) = unmarshal ap no
 unmarshal ap (IF True yes no) = unmarshal ap yes
@@ -307,8 +377,9 @@ unmarshal ap (x // y) = do
   return $ maybe (maybe Nothing (\(y_res', len) => Just $ (Right y_res', len)) y_res)
                                 (\(x_res', len) => Just $ (Left x_res', len)) x_res
 unmarshal ap (LIST pl) = map Just (unmarshalList ap pl)
-unmarshal ap (LISTN n pl) = ?unmarshal_rhs_5
-unmarshal ap (p >>= f) = ?unmarshal_rhs_6
+--unmarshal ap (LISTN n pl) = unmarshalVect ap pl (intToNat n)
+unmarshal ap (c >>= k) = unmarshalBind ap (c >>= k)
+  
 
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
