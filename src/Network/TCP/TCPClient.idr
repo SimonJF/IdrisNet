@@ -1,7 +1,7 @@
 module Network.TCP.TCPClient
 import Effects
 import Network.TCP.TCPCommon
-import Network.Packet
+--import Network.Packet
 import Network.PacketLang
 -- D'OH
 %access public

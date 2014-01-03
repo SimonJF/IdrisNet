@@ -142,15 +142,6 @@ vectBitLength pl [] = 0
 vectBitLength pl (x::xs) = ?vbl_rhs
 -}
 
-bitLength : (p : PacketLang) -> (mkTy p) -> Int
-bitLength (CHUNK c) x = chunkLength c x
-bitLength (IF False yes no) x = bitLength no x
-bitLength (IF True yes no) x = bitLength yes x
-bitLength (y // z) x = ?bitLength_rhs_3
-bitLength (LIST y) x = ?bitLength_rhs_4
-bitLength (LISTN n y) x = ?bitLength_rhs_5
-bitLength (p >>= f) x = ?bitLength_rhs_6
-
 {- Marshalling code -}
 
 {- Marshal Chunks to ByteData -}
@@ -212,8 +203,10 @@ marshalList (ActivePacketRes pckt pos p_len) pl (x::xs) = do
   return $ len + xs_len
 
 {- Unmarshalling Code -}
-unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
+unmarshal : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length)
 
+
+--unmarshal : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length)
 unmarshalCString' : ActivePacket ->  
                     Int -> 
                     IO (Maybe (List Char, Length))
@@ -256,8 +249,15 @@ unmarshalLString' (ActivePacketRes pckt pos p_len) n = do
 unmarshalLString : ActivePacket -> Int -> IO String
 unmarshalLString ap n = map pack (unmarshalLString' ap n)
 
+unmarshalBits : ActivePacket -> (c : Chunk) -> IO (Maybe (chunkTy c, Length))
+unmarshalBits (ActivePacketRes pckt pos p_len) (Bit width p) with ((pos + width) < p_len)
+  | True = do
+    res <- foreignGetBits pckt pos (pos + width)
+    return $ Just $ (BInt res (believe_me oh), width) -- Have to trust it, as it's from C
+  | False = return Nothing
+
 unmarshalChunk : ActivePacket -> (c : Chunk) -> IO (Maybe (chunkTy c, Length))
-unmarshalChunk x (Bit width _) = ?mv
+unmarshalChunk ap (Bit width p) = unmarshalBits ap (Bit width p) 
 unmarshalChunk ap CString = unmarshalCString ap
 unmarshalChunk (ActivePacketRes pckt pos p_len) (LString n) =
   -- Do bounds checking now, if it passes then we're golden later on
@@ -266,8 +266,7 @@ unmarshalChunk (ActivePacketRes pckt pos p_len) (LString n) =
     return $ Just (res, (8 * n))
   else
     return Nothing
-unmarshalChunk x (Prop P) = ?unmarshalChunk_rhs_4
-
+unmarshalChunk x (Prop P) = return Nothing 
 -- TODO: There is an ambiguity problem here.
 -- Consider the case where we have a packet description of LIST String, String, String, Int.
 -- The packet decoding would fail: we'd include the two strings as part of the list.
@@ -275,40 +274,52 @@ unmarshalChunk x (Prop P) = ?unmarshalChunk_rhs_4
 -- the entire list of tokens available to us. 
 -- Needs some extra thought, and is a big problem. But it's not covered in the original IP DSL, 
 --so we're OK just for now, I think.
--- Also, this is a horrible hack because of some problem with typeclass resolution.
--- Turns out I can't actually do a case statement within unmarshalList, so it has to be extracted
--- into a second function.
--- Also, I'm just typing away right now since it's easier than writing Actual Code
-mutual
-  unmarshalList : ActivePacket -> (pl : PacketLang) -> IO (List (mkTy pl), Length)
-  unmarshalList ap pl = 
-    let (ActivePacketRes pckt pos p_len) = ap in
-    if (pos < p_len) then do
-      item_res <- unmarshal ap pl
-      unmarshalList' ap pl item_res
-    else return ([], 0) -- Reached end of packet
 
-  unmarshalList' : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length) -> IO (List (mkTy pl), Length)
-  unmarshalList' (ActivePacketRes pckt pos p_len) pl (Just (res, len)) = ?shove_this_typeclass_resolution_error_up_your_arse
- --   unmarshalList (ActivePacketRes pckt (pos + len) p_len) pl >>= (\(rest, rest_len) =>
-   --  return (res :: rest, len + rest_len))
-  unmarshalList' (ActivePacketRes pckt pos p_len) pl Nothing = return ([], 0)
+--T  
+unmarshalList : ActivePacket -> (pl : PacketLang) -> (List (mkTy pl), Length)
+unmarshalList (ActivePacketRes pckt pos p_len) pl =
+    case (unmarshal (ActivePacketRes pckt pos p_len) pl) of
+      Just (item, len) => 
+        let xs_tup = unmarshalList (ActivePacketRes pckt (pos + len) p_len) pl in
+        let (rest, rest_len) = (fst xs_tup, snd xs_tup) in
+            (item :: rest, len + rest_len)
+      Nothing => ([], 0) -- Finished parsing list
 
---unmarshal : ActivePacket -> (pl : PacketLang) -> IO (Maybe (mkTy pl, Length))
-unmarshal ap (CHUNK c) = unmarshalChunk ap c
+
+unmarshalVect : ActivePacket -> 
+                (pl : PacketLang) -> 
+                (len : Nat) -> 
+                Maybe ((Vect len (mkTy pl)), Length)
+unmarshalVect _ _ Z = Just ([], 0)
+unmarshalVect (ActivePacketRes pckt pos p_len) pl (S k) = do
+  item_tup <- unmarshal (ActivePacketRes pckt pos p_len) pl 
+  let (item, len) = (fst item_tup, snd item_tup)
+  rest_tup <- unmarshalVect (ActivePacketRes pckt (pos + len) p_len) pl k
+  let (rest, rest_len) = (fst rest_tup, snd rest_tup)
+  return (item :: rest, len + rest_len)
+
+-- unmarshal : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length)
+unmarshal ap (CHUNK c) = unsafePerformIO $ unmarshalChunk ap c
 unmarshal ap (IF False yes no) = unmarshal ap no
 unmarshal ap (IF True yes no) = unmarshal ap yes
 -- Attempt x, if correct then return x.
 -- If not, try y. If correct, return y. 
 -- If neither correct, return Nothing.
 unmarshal ap (x // y) = do
-  x_res <- unmarshal ap x
-  y_res <- unmarshal ap y
-  return $ maybe (maybe Nothing (\(y_res', len) => Just $ (Right y_res', len)) y_res)
-                                (\(x_res', len) => Just $ (Left x_res', len)) x_res
-unmarshal ap (LIST pl) = map Just (unmarshalList ap pl)
-unmarshal ap (LISTN n pl) = ?unmarshal_rhs_5
-unmarshal ap (p >>= f) = ?unmarshal_rhs_6
+  let x_res = unmarshal ap x
+  let y_res = unmarshal ap y
+  (maybe (maybe Nothing (\(y_res', len) => Just $ (Right y_res', len)) y_res)
+         (\(x_res', len) => Just $ (Left x_res', len)) x_res)
+unmarshal ap (LIST pl) = Just (unmarshalList ap pl)
+unmarshal ap (LISTN n pl) = unmarshalVect ap pl n
+unmarshal (ActivePacketRes pckt pos p_len) (c >>= k) = do
+  res1_tup <- unmarshal (ActivePacketRes pckt pos p_len) c 
+  -- Hack hack hack around the TC resolution bug...
+  let (res, res_len) = (fst res1_tup, snd res1_tup)
+  res2_tup <- unmarshal (ActivePacketRes pckt (pos + res_len) p_len) (k res) 
+  let (res2, res2_len) = (fst res2_tup, snd res2_tup)
+  return ((res ** res2), res_len + res2_len)
+  
 
 instance Handler Packet IO where
   handle () (CreatePacket len) k = do
