@@ -34,7 +34,7 @@ data Fits : Int -> Int -> Type where
            { default tactics {compute; refine oh; solve;}
     prf : so ((log2 (intToNat a) + 1) <= (intToNat b))} -> Fits a b
     -}
-private
+
 {-
 fits : (x : Int) -> (b : Int) -> Bool
 fits x bits = ((log2 x_nat) + 1) < ((log2 b_nat) + 1)
@@ -135,11 +135,12 @@ syntax check [p] = CHUNK (Prop (P_BOOL p))
 syntax lstring [n] = CHUNK (LString n)
 syntax cstring = CHUNK (CString)
 
+{-
 dlString : PacketLang
 dlString = do len <- bits 8
               str <- lstring (val len)
               check ((natToInt . Prelude.Strings.length $ str) == (val len))
-
+              -}
 --bit : {w : Int} -> (i : Int) -> (p : (so (i < w))) -> Chunk
 --bit i p = Bit i p
 
@@ -149,7 +150,7 @@ dlString = do len <- bits 8
 myBounded : Bounded 5
 myBounded = BInt 0 (MkFits 0 5)
 -}
-
+{-
 stringFormat : PacketLang
 --stringFormat i = (bits i) >>= 
 --                 (\len => (check (val len > 0)) >>= \_ => lstring (val len))
@@ -157,6 +158,7 @@ stringFormat = do len <- bits 5
                   check ((val len) > 0)
                   --let len = myBounded
                   lstring (val len)
+                  -}
 -- ICMP Stuff
 -- (Bit of a failed experiment, as we'll also need to implement all of IP...)
 ICMPType : Type

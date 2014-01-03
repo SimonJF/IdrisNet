@@ -1,6 +1,6 @@
 module Network.TCP.TCPCommon
 import Network.NetworkCommon
-import Network.Packet
+--import Network.Packet
 import Network.PacketLang
 import Effects
 %access public
