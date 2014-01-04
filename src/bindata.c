@@ -67,7 +67,7 @@ word32 setnbits(word32 v, int startoff, int endoff, int data) {
 
 
 word32 getnbits(word32 v, int startbit, int endbit) {
-//    printf("Getting %d, %d\n", startbit, endbit);
+    //printf("Getting %d, %d\n", startbit, endbit);
     return (v << startbit) >> (startbit + (32-endbit));
 }
 
@@ -99,7 +99,7 @@ void setPacketBits(PACKET p, int start, int end, int data) {
 void setPacketString(PACKET p, int start, char* s, int l, char t) {
     int i;
     while(*s!=t && (l!=0)) {
-        printf("LIB: Setting char %c\n", *s);
+ //       printf("LIB: Setting char %c\n", *s);
         setPacketBits(p, start, start+7, (int)(*s));
         start+=8;
         ++s;
@@ -112,6 +112,7 @@ int getPacketByte(PACKET p, int b) {
 }
 
 int getPacketBits(PACKET p, int start, int end) {
+    //printf("getPacketBits -- Start: %d, End: %d\n", start, end);
     int startb = start >> 5; // Word the start bits are in
     int endb = end >> 5;     // Word the end bits are in
 

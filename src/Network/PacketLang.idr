@@ -46,6 +46,9 @@ data Bounded : Int -> Type where
   --BInt : (x : Int) -> (prf : Fits x i) -> Bounded i
   BInt : (x : Int) -> (prf : so (x < i)) -> Bounded i
 
+instance Show (Bounded i) where
+  show (BInt x _) = show x
+
 val : Bounded i -> Int
 val (BInt i p) = i
 

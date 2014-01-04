@@ -2,6 +2,7 @@ module Main
 import Network.Packet
 import Network.PacketLang
 import Effects
+import Effect.StdIO
 
 stringList : PacketLang
 stringList = do
@@ -33,8 +34,47 @@ makeAndDump = do
     destroyFailedPacket
     return "Error allocating memory for packet"
 
+makeAndRetain : Eff IO [PACKET ()] (Maybe RawPacket)
+makeAndRetain = do
+  createPacket 1024
+  if_valid then do
+    writePacket stringList myPacket
+    if_valid then do
+      dumpPacket
+      res <- unsafeExit
+      Effects.return $ Just res
+    else do
+      destroyFailedPacket
+      Effects.return Nothing
+  else do 
+    destroyFailedPacket
+    Effects.return Nothing
+
+processPacket : RawPacket ->
+                Eff IO [PACKET (), STDIO] ()
+processPacket pckt = do
+  res <- readPacket stringList pckt 1024
+  if_valid then do
+    -- Won't need this when I rewrite it with dependent effects...
+    case res of 
+      Just (hwd ** nvect) => do
+        putStr ("Decoding successful, packet: " ++ (show hwd) ++ 
+                   ", " ++ (show nvect) ++ "\n")
+        destroyPacket
+      _ => do putStr "Decoding unsuccessful :( \n"
+              destroyPacket
+  else do
+    putStr "Decoding unsuccessful :( \n"
+    destroyFailedPacket
+
+
 main : IO ()
 main = do
-  result <- run [()] makeAndDump
-  putStrLn result
+--  result <- run [()] makeAndDump
+  res <- run [()] makeAndRetain
+  case res of
+       Just pckt => 
+         run [(), ()] (processPacket pckt)
+       Nothing => putStrLn "Packet writing failed"
+  --putStrLn result
 

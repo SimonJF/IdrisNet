@@ -2,7 +2,7 @@
 module Network.Packet
 import Network.PacketLang
 import Effects
-
+import Debug.Trace
 %access public
 
 %include C "bindata.h"
@@ -39,9 +39,13 @@ data Packet : Effect where
 
   -- Dumps packet to console. Not something we really want in the final thing...
   DumpPacket : Packet (ActivePacket) (ActivePacket) ()
-  ReadPacket : (p : PacketLang) -> Packet (ActivePacket) 
-                                          (Either (FailedPacket) (ActivePacket)) 
-                                          (Either () (mkTy p))
+
+  -- Wrapper around unmarshalling functions.
+  -- Takes a raw pointer and constructs a packet representation
+  ReadPacket : (p : PacketLang) -> RawPacket -> Length ->
+               Packet () (Either (FailedPacket) (ActivePacket)) 
+                         (Maybe (mkTy p))
+  -- Wrapper around marshalling functions
   WritePacket : (p : PacketLang) -> (mkTy p) -> Packet (ActivePacket)
                                                        (Either (FailedPacket) 
                                                                (ActivePacket)) ()
@@ -59,6 +63,8 @@ data Packet : Effect where
   -- Returns a raw pointer to the current packet
   GetRawPtr : Packet (ActivePacket) (ActivePacket) RawPacket
 
+  -- TESTING ONLY. Transitions to empty state *without* freeing packet in memory
+  UnsafeExit : Packet (ActivePacket) () RawPacket
 
 
 PACKET : Type -> EFFECT
@@ -79,10 +85,11 @@ destroyFailedPacket = DestroyFailedPacket
 dumpPacket : Eff IO [PACKET (ActivePacket)] ()
 dumpPacket = DumpPacket
 
-readPacket : (p : PacketLang) -> EffM IO [PACKET (ActivePacket)] 
-                                         [PACKET (Either (FailedPacket) (ActivePacket))]
-                                         (Either () (mkTy p))
-readPacket lang = (ReadPacket lang)
+readPacket : (p : PacketLang) -> RawPacket -> Length ->
+             EffM IO [PACKET ()] 
+                     [PACKET (Either (FailedPacket) (ActivePacket))]
+                     (Maybe (mkTy p))
+readPacket lang pckt len = (ReadPacket lang pckt len)
 
 writePacket : (p : PacketLang) -> (mkTy p) -> EffM IO [PACKET (ActivePacket)] 
                                                       [PACKET (Either FailedPacket ActivePacket)] ()
@@ -95,6 +102,10 @@ rawSetByte pos dat = (RawSetByte pos dat)
 rawSetBits : Int -> Int -> Int -> EffM IO [PACKET (ActivePacket)] 
                                           [PACKET (Either (FailedPacket) (ActivePacket))] ()
 rawSetBits start end dat = (RawSetBits start end dat)
+
+
+unsafeExit : EffM IO [PACKET (ActivePacket)] [PACKET ()] RawPacket
+unsafeExit = UnsafeExit
 
 foreignDestroyPacket : RawPacket -> IO ()
 foreignDestroyPacket (RawPckt pckt) = mkForeign (FFun "freePacket" [FPtr] FUnit) pckt
@@ -132,9 +143,9 @@ chunkLength (Bit w p) x1 = w
 -- TODO: This doesn't take into account if there's a null character
 -- within the string itself. I had something nice using span earlier,
 -- but it didn't work (probably due to a library bug)
-chunkLength CString str = 8 * (strLen str)
+chunkLength CString str = 8 * ((strLen str) + 1) 
 chunkLength (LString len) str = 8 * len 
-chunkLength (Prop _) x1 = 0 -- Not written to the packet
+chunkLength (Prop _) p = 0 -- Not written to the packet
 
 {-
 vectBitLength : (p : PacketLang) -> mkTy p -> Int
@@ -210,21 +221,23 @@ unmarshal : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length)
 unmarshalCString' : ActivePacket ->  
                     Int -> 
                     IO (Maybe (List Char, Length))
-unmarshalCString' (ActivePacketRes pckt pos p_len) i with (i < p_len)
+unmarshalCString' (ActivePacketRes pckt pos p_len) i with (pos + 8 < p_len)
   -- Firstly we need to check whether we're within the bounds of the packet.
   -- If not, then the parse has failed. 
   -- If we're within bounds, we need to read the next character, and recursively
   -- call.
   | True = do
-    next_byte <- foreignGetBits pckt pos (pos + 8)
+    next_byte <- foreignGetBits pckt pos (pos + 7)
+    putStrLn $ "Byte read: " ++ (show next_byte)
     let char = chr next_byte
+    putStrLn $ "Char: " ++ (show char)
     -- If we're up to a NULL, we've read the string
-    if (char == '\0') then 
-      return $ Just ([], i + 8)
+    if (char == '\0') then do
+      return $ Just ([], 8)
     else do -- Otherwise, recursively call
       -- We're assuming sizeof(char) = 8 here
       rest <- unmarshalCString' (ActivePacketRes pckt (pos + 8) p_len) (i + 8)
-      case rest of Just (xs, i) => return $ Just (char::xs, i + 8)
+      case rest of Just (xs, j) => return $ Just (char::xs, j + 8)
                    Nothing => return Nothing
   | False = return Nothing
 
@@ -294,9 +307,10 @@ unmarshalVect _ _ Z = Just ([], 0)
 unmarshalVect (ActivePacketRes pckt pos p_len) pl (S k) = do
   item_tup <- unmarshal (ActivePacketRes pckt pos p_len) pl 
   let (item, len) = (fst item_tup, snd item_tup)
-  rest_tup <- unmarshalVect (ActivePacketRes pckt (pos + len) p_len) pl k
-  let (rest, rest_len) = (fst rest_tup, snd rest_tup)
-  return (item :: rest, len + rest_len)
+  trace ("Len: " ++ (show len)) (do
+    rest_tup <- unmarshalVect (ActivePacketRes pckt (pos + len) p_len) pl k
+    let (rest, rest_len) = (fst rest_tup, snd rest_tup)
+    return (item :: rest, len + rest_len))
 
 -- unmarshal : ActivePacket -> (pl : PacketLang) -> Maybe (mkTy pl, Length)
 unmarshal ap (CHUNK c) = unsafePerformIO $ unmarshalChunk ap c
@@ -326,6 +340,17 @@ instance Handler Packet IO where
     pckt <- foreignCreatePacket len
     k (Right $ ActivePacketRes pckt 0 len) ()
 
+  handle () (ReadPacket pl pckt len) k = do
+    let res_tup = unmarshal (ActivePacketRes pckt 0 len) pl
+    case res_tup of
+         Just (res, res_len) => 
+           k (Right $ ActivePacketRes pckt res_len len) (Just res)
+         Nothing => 
+           k (Left $ FailedPacketRes (Just pckt)) Nothing
+--    let (res, len) = (fst res_tup, snd res_tup)
+--    let output_res = either res (const $ FailedPacketRes (Just pckt))
+  --                              (const $ ActivePacketRes 
+                                
   handle (ActivePacketRes pckt pos p_len) (WritePacket lang dat) k = do
     len <- marshal (ActivePacketRes pckt pos p_len) lang dat
     putStrLn $ "Len: " ++ (show len)
@@ -356,3 +381,5 @@ instance Handler Packet IO where
   handle (ActivePacketRes pckt p_pos p_len) (DumpPacket) k = do
     foreignDumpPacket pckt p_pos
     k (ActivePacketRes pckt p_pos p_len) ()
+
+  handle (ActivePacketRes pckt p_pos p_len) (UnsafeExit) k = k () pckt
